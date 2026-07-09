@@ -1,39 +1,49 @@
-# 🎙️ Transcribe Drop
+<div align="center">
+  <img src="media/icon.png" width="120" alt="Transcribe Drop">
+  <h1>Transcribe Drop</h1>
+  <p><b>Transcribe any video, or follow a YouTube channel and let AI tell you what's worth watching — all on your Mac.</b></p>
+</div>
 
-A tiny macOS app that turns any video into text — **paste a link or drop a video, get a transcript.** Everything runs on your Mac: no accounts, no API keys, no per-minute charges.
+![Transcribe Drop](media/screenshot.png)
+
+Transcription runs entirely on your machine (whisper.cpp) — no accounts, no per-minute charges, nothing leaves your Mac. The only optional online part is the AI summaries.
 
 ## What it does
 
-- **Paste a URL** (YouTube, Facebook, and most sites) → downloads just the audio and transcribes it
-- **Drop a video on the app icon** (or click *Choose video…*) → transcribes a local file
-- Pick the **language** (or auto-detect), and optionally **translate to English**
-- Saves a clean `.txt` to the app's `output/` folder and shows it in the window (Copy / Reveal / Folder)
+- **Transcribe** any video or audio — paste a URL (YouTube, Facebook, …) or drop a file. Local, free, private.
+- **Follow a YouTube channel** — it lists the latest videos, transcribes them (YouTube captions first, on-device Whisper as fallback), and shows them in a grid.
+- **AI summaries** — click a video and Claude Haiku summarises it, tuned to a short "what I'm working on" context file, flagging what's **relevant to you** (the ✨). Summaries are generated on demand, so you only pay for what you actually open (~1¢ each, then cached).
+- **Collections** — group pasted video/reel URLs (including Facebook reels) under any name you like.
+- **Watch-later checklist** — star videos (☆) and check them off as you get through them.
 
-Under the hood: [yt-dlp](https://github.com/yt-dlp/yt-dlp) grabs the audio, [whisper.cpp](https://github.com/ggerganov/whisper.cpp) transcribes it locally, [ffmpeg](https://ffmpeg.org) does the audio conversion. The UI is [pywebview](https://pywebview.flowrl.com).
+## Install (macOS)
 
-## Install
+1. Download **`Transcribe-Drop-vX.Y.Z.zip`** from the [latest release](https://github.com/djaysan/transcribe-drop/releases/latest).
+2. Unzip it, then **double-click `Install.command`**. First time only: right-click it → **Open** to approve (it's an unsigned local script).
+3. It installs the command-line tools, sets up an isolated Python environment, and builds **Transcribe Drop.app** right there.
+4. Drag **Transcribe Drop.app** to your Applications folder. First launch: right-click → **Open** (unsigned app — no Apple Developer account needed).
 
-```sh
-git clone https://github.com/djaysan/transcribe-drop.git
-cd transcribe-drop
-./install.sh
-```
+Requires [Homebrew](https://brew.sh) — the installer uses it to fetch `yt-dlp`, `ffmpeg`, and `whisper-cpp`. The ~148 MB transcription model downloads automatically the first time it's needed.
 
-`install.sh` installs the tools it needs (`yt-dlp`, `ffmpeg`, `whisper-cpp` via Homebrew, plus `pywebview`) and builds **Transcribe Drop.app** in the folder. Drag it to your Dock.
+## AI summaries (optional)
 
-Requirements: macOS + [Homebrew](https://brew.sh) + Python 3. The transcription model (~148 MB) downloads automatically the first time you transcribe something.
-
-## Use it
-
-- **Double-click** the app → paste a URL → **Transcribe**
-- **Drop a video** onto the app's Dock icon → it opens preloaded, just hit **Transcribe**
+Open **⚙ Settings**, paste an [Anthropic API key](https://console.anthropic.com), and — optionally — pick a context file describing what you do (there's a built-in prompt to generate one with Claude). Without a key the app still lists and transcribes everything; it just skips the summaries. Everything except the summaries is free and local.
 
 ## Notes
 
-- **Languages:** uses the multilingual model (`ggml-base.bin`) — pick a language in the window or leave it on Auto-detect. Tick *Translate to English* to get an English transcript of a foreign-language video. For higher accuracy (slower), edit `MODEL` / `MODEL_URL` in `transcribe-app.py` to `ggml-small.bin` or `ggml-medium.bin` ([model list](https://huggingface.co/ggerganov/whisper.cpp/tree/main)).
-- **Private / login-only videos** won't download — anything public works.
-- **First launch:** macOS may ask permission for the app to launch itself; click Allow. If Gatekeeper blocks it, right-click → Open once.
-- The 141 MB model is **not** in this repo (GitHub's file limit) — it's fetched on first run.
+- **Facebook:** individual reels work (paste them under ＋ Clips); following a whole FB profile isn't possible — its reels tab can't be listed.
+- Your data (transcripts, settings, model) lives in `~/Library/Application Support/Transcribe Drop`, so the app is fully movable.
+- Built with [yt-dlp](https://github.com/yt-dlp/yt-dlp) + [whisper.cpp](https://github.com/ggerganov/whisper.cpp) + [ffmpeg](https://ffmpeg.org) (transcription), Claude Haiku (summaries), and [pywebview](https://pywebview.flowrl.com) (UI).
+
+## Run from source
+
+Prefer not to build the app? `./install.sh` does everything, or run it directly:
+
+```sh
+brew install yt-dlp ffmpeg whisper-cpp
+pip install pywebview anthropic
+python3 transcribe-app.py
+```
 
 ## License
 
