@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Transcribe Drop</title>
+<style>
+  :root { --bg:#0e0e13; --card:#17171f; --line:#26262f; --t1:#f4f4f6; --t2:#a6a6b2; --t3:#6f6f7d;
+          --accent:#7b5cdc; --accent2:#9b7bef; --ok:#4ade80; --err:#f87171; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { height:100%; }
+  body { background:var(--bg); color:var(--t1); font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+         padding:26px; display:flex; flex-direction:column; gap:18px; -webkit-user-select:none; user-select:none; }
+  .brand { display:flex; align-items:center; gap:10px; }
+  .brand .mark { width:30px; height:30px; border-radius:9px; background:linear-gradient(135deg,var(--accent),var(--accent2));
+                 display:flex; align-items:center; justify-content:center; font-size:16px; }
+  .brand h1 { font-size:16px; font-weight:650; letter-spacing:-.01em; }
+  .brand p { font-size:11.5px; color:var(--t3); margin-top:1px; }
+
+  .drop { border:1.5px dashed var(--line); border-radius:14px; background:var(--card); padding:22px;
+          display:flex; flex-direction:column; gap:14px; transition:border-color .15s, background .15s; }
+  .drop.hot { border-color:var(--accent); background:#191622; }
+
+  .field { display:flex; gap:8px; }
+  input[type=url] { flex:1; background:#0f0f16; border:1px solid var(--line); color:var(--t1);
+                    padding:11px 13px; border-radius:10px; font-size:13.5px; outline:none; }
+  input[type=url]:focus { border-color:var(--accent); }
+  .btn { border:none; border-radius:10px; padding:11px 15px; font-size:13.5px; font-weight:600; cursor:pointer;
+         color:#fff; background:var(--accent); transition:filter .15s, opacity .15s; white-space:nowrap; }
+  .btn:hover { filter:brightness(1.1); }
+  .btn:disabled { opacity:.5; cursor:default; filter:none; }
+  .btn.ghost { background:#22222c; color:var(--t1); }
+  .or { text-align:center; font-size:11.5px; color:var(--t3); }
+  .picked { font-size:12.5px; color:var(--accent2); word-break:break-all; }
+  .hint { font-size:11.5px; color:var(--t3); text-align:center; }
+  .opts { display:flex; align-items:center; gap:16px; flex-wrap:wrap; font-size:12.5px; color:var(--t2); }
+  .opts label { display:flex; align-items:center; gap:7px; }
+  .opts select { background:#0f0f16; border:1px solid var(--line); color:var(--t1); border-radius:8px;
+                 padding:6px 8px; font-size:12.5px; outline:none; }
+  .opts select:focus { border-color:var(--accent); }
+  .opts .chk { cursor:pointer; }
+  .opts input[type=checkbox] { accent-color:var(--accent); }
+
+  .go { padding:13px; font-size:14.5px; }
+  .status { font-size:13px; color:var(--t2); min-height:20px; display:flex; align-items:center; gap:8px; }
+  .status .spin { width:13px; height:13px; border:2px solid var(--line); border-top-color:var(--accent);
+                  border-radius:50%; animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .status.err { color:var(--err); }
+  .status.ok { color:var(--ok); }
+
+  .result { flex:1; display:none; flex-direction:column; gap:10px; min-height:0; }
+  .result.show { display:flex; }
+  .result .top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .result .title { font-size:13px; color:var(--t2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .result .acts { display:flex; gap:8px; }
+  .result .acts .btn { padding:7px 11px; font-size:12px; }
+  textarea { flex:1; background:var(--card); border:1px solid var(--line); border-radius:12px; color:var(--t1);
+             padding:14px; font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; resize:none; outline:none;
+             -webkit-user-select:text; user-select:text; }
+</style>
+</head>
+<body>
+  <div class="brand">
+    <div class="mark">🎙️</div>
+    <div>
+      <h1>Transcribe Drop</h1>
+      <p>Paste a link or choose a video — transcribed on your Mac, no cloud.</p>
+    </div>
+  </div>
+
+  <div class="drop" id="drop">
+    <div class="field">
+      <input type="url" id="url" placeholder="Paste a video URL (YouTube, Facebook, …)" autocomplete="off" spellcheck="false">
+      <button class="btn ghost" id="pick">Choose video…</button>
+    </div>
+    <div class="picked" id="picked" style="display:none"></div>
+    <div class="opts">
+      <label>Language
+        <select id="lang">
+          <option value="">Auto-detect</option>
+          <option value="en">English</option>
+          <option value="fr">French</option>
+          <option value="pl">Polish</option>
+          <option value="es">Spanish</option>
+          <option value="de">German</option>
+          <option value="it">Italian</option>
+          <option value="pt">Portuguese</option>
+          <option value="nl">Dutch</option>
+        </select>
+      </label>
+      <label class="chk"><input type="checkbox" id="translate"> Translate to English</label>
+    </div>
+    <div class="hint">or drop a video onto the app icon in your Dock</div>
+  </div>
+
+  <button class="btn go" id="go">Transcribe</button>
+  <div class="status" id="status"></div>
+
+  <div class="result" id="result">
+    <div class="top">
+      <div class="title" id="rtitle"></div>
+      <div class="acts">
+        <button class="btn ghost" id="copy">Copy</button>
+        <button class="btn ghost" id="reveal">Reveal</button>
+        <button class="btn ghost" id="folder">Folder</button>
+      </div>
+    </div>
+    <textarea id="text" readonly spellcheck="false"></textarea>
+  </div>
+
+<script>
+  let pickedFile = null;   // filesystem path chosen/dropped
+  let lastFile = null;     // saved transcript path
+  const $ = id => document.getElementById(id);
+  const api = () => window.pywebview.api;
+
+  function setStatus(msg, kind = '') {
+    const el = $('status');
+    el.className = 'status ' + kind;
+    el.innerHTML = (kind === '' && msg ? '<span class="spin"></span>' : '') + (msg || '');
+  }
+  function setPicked(path) {
+    pickedFile = path;
+    if (path) { $('picked').style.display = 'block'; $('picked').textContent = '📄 ' + path.split('/').pop(); $('url').value = ''; }
+    else { $('picked').style.display = 'none'; }
+  }
+
+  // Python → UI callbacks
+  window.onStatus = msg => setStatus(msg);
+  window.onFail = msg => { setStatus(msg, 'err'); $('go').disabled = false; };
+  window.onDone = ({ title, text, file }) => {
+    lastFile = file;
+    $('rtitle').textContent = title;
+    $('text').value = text;
+    $('result').classList.add('show');
+    setStatus('Saved to ' + file, 'ok');
+    $('go').disabled = false;
+  };
+
+  function start() {
+    const url = $('url').value.trim();
+    const source = url || pickedFile;
+    if (!source) { setStatus('Paste a URL or choose a video first.', 'err'); return; }
+    $('result').classList.remove('show');
+    $('go').disabled = true;
+    setStatus('Starting…');
+    api().transcribe(source, $('lang').value, $('translate').checked);
+  }
+
+  $('go').addEventListener('click', start);
+  $('url').addEventListener('keydown', e => { if (e.key === 'Enter') start(); });
+  $('url').addEventListener('input', () => { if ($('url').value.trim()) setPicked(null); });
+  $('pick').addEventListener('click', async () => { const p = await api().pick_file(); if (p) setPicked(p); });
+  $('copy').addEventListener('click', () => { navigator.clipboard.writeText($('text').value); setStatus('Copied to clipboard', 'ok'); });
+  $('reveal').addEventListener('click', () => { if (lastFile) api().reveal(lastFile); });
+  $('folder').addEventListener('click', () => api().open_output());
+
+  // Visual drag feedback (real file path comes from the Dock-icon droplet or the picker)
+  const drop = $('drop');
+  ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('hot'); }));
+  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('hot'); }));
+
+  // On launch, preload a file that was dropped on the app icon.
+  window.addEventListener('pywebviewready', async () => {
+    const p = await api().get_preload();
+    if (p) setPicked(p);
+  });
+</script>
+</body>
+</html>

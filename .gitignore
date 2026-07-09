@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.DS_Store
+models/*.bin
+output/
+inbox/
+Transcribe Drop.app/
+build/
+dist/
+*.spec
+droplet.applescript
