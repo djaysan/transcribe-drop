@@ -18,12 +18,13 @@ Transcription runs entirely on your machine (whisper.cpp) — no accounts, no pe
 
 ## Install (macOS)
 
-1. Download **`Transcribe-Drop-vX.Y.Z.zip`** from the [latest release](https://github.com/djaysan/transcribe-drop/releases/latest).
-2. Unzip it, then **double-click `Install.command`**. First time only: right-click it → **Open** to approve (it's an unsigned local script).
-3. It installs the command-line tools, sets up an isolated Python environment, and builds **Transcribe Drop.app** right there.
-4. Drag **Transcribe Drop.app** to your Applications folder. First launch: right-click → **Open** (unsigned app — no Apple Developer account needed).
+1. Download **`Transcribe-Drop-macOS.zip`** from the [latest release](https://github.com/djaysan/transcribe-drop/releases/latest) and unzip it.
+2. In the **Transcribe Drop** folder, **right-click `Open Transcribe Drop.command` → Open** (just this once — macOS blocks *double*-clicking downloaded scripts, but right-click → Open works). It approves the app and launches it.
+3. Drag **Transcribe Drop.app** to your Applications folder — done.
 
-Requires [Homebrew](https://brew.sh) — the installer uses it to fetch `yt-dlp`, `ffmpeg`, and `whisper-cpp`. The ~148 MB transcription model downloads automatically the first time it's needed.
+First launch installs the tools it needs and downloads the ~148 MB model automatically. Requires [Homebrew](https://brew.sh) (used to fetch `yt-dlp`, `ffmpeg`, `whisper-cpp`).
+
+> It's an unsigned app (no paid Apple Developer account), so that one-time right-click → Open is macOS's approval step. Prefer to build from source? Grab **`Transcribe-Drop-vX.Y.Z.zip`** and run `./install.sh`.
 
 ## AI summaries (optional)
 
