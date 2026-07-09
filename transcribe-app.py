@@ -288,6 +288,21 @@ class Api:
             self._emit('onProc', 'Up to date.' if total else '')
 
 
+def _set_dock_icon():
+    # The Dock shows the Python interpreter's rocket by default — point it at our
+    # icon instead. Bundle: applet.icns in Resources; source: icon/AppIcon.icns.
+    try:
+        from AppKit import NSApplication, NSImage
+        for cand in (APP_DIR / 'applet.icns', APP_DIR / 'icon' / 'AppIcon.icns'):
+            if cand.exists():
+                img = NSImage.alloc().initByReferencingFile_(str(cand))
+                if img:
+                    NSApplication.sharedApplication().setApplicationIconImage_(img)
+                return
+    except Exception:  # noqa: BLE001 — cosmetic only
+        pass
+
+
 def main():
     global window
     channels.init_db()
@@ -297,7 +312,8 @@ def main():
         'Transcribe Drop', str(APP_DIR / 'ui.html'),
         js_api=api, width=860, height=720, min_size=(640, 600),
     )
-    webview.start()
+    _set_dock_icon()
+    webview.start(_set_dock_icon)  # set again once the GUI loop is up (more reliable)
 
 
 if __name__ == '__main__':

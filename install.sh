@@ -61,6 +61,10 @@ if [ -f icon/AppIcon.icns ]; then
   cp icon/AppIcon.icns "$RES/droplet.icns"
 fi
 touch "$APP" "$APP/Contents/Info.plist"
+# Ad-hoc code-sign (sign as the last step, after all files are in place). Without
+# any signature a downloaded copy reads as "damaged"; ad-hoc gives the normal
+# "unverified developer → Open Anyway" flow instead.
+codesign --force --deep --sign - "$APP" 2>/dev/null || true
 
 echo ""
 echo "Done. Drag 'Transcribe Drop.app' into your Applications folder (or double-click it right here)."
