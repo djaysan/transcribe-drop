@@ -14,7 +14,7 @@ Under the hood: [yt-dlp](https://github.com/yt-dlp/yt-dlp) grabs the audio, [whi
 ## Install
 
 ```sh
-git clone https://github.com/<you>/transcribe-drop.git
+git clone https://github.com/djaysan/transcribe-drop.git
 cd transcribe-drop
 ./install.sh
 ```
