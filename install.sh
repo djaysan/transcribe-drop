@@ -54,8 +54,13 @@ RES="$APP/Contents/Resources"
 # Bundle the code + launcher + icon inside the app.
 cp transcribe-app.py channels.py ui.html launch.sh "$RES/"
 chmod +x "$RES/launch.sh"
-[ -f icon/AppIcon.icns ] && cp icon/AppIcon.icns "$RES/applet.icns"
-touch "$APP"
+# osacompile makes an 'on open' applet a droplet, whose icon is droplet.icns —
+# overwrite both so the custom icon shows regardless of CFBundleIconFile.
+if [ -f icon/AppIcon.icns ]; then
+  cp icon/AppIcon.icns "$RES/applet.icns"
+  cp icon/AppIcon.icns "$RES/droplet.icns"
+fi
+touch "$APP" "$APP/Contents/Info.plist"
 
 echo ""
 echo "Done. Drag 'Transcribe Drop.app' into your Applications folder (or double-click it right here)."
