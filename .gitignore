@@ -4,6 +4,11 @@ __pycache__/
 models/*.bin
 output/
 inbox/
+.env
+data.db
+data.db-*
+settings.json
+context.md
 Transcribe Drop.app/
 build/
 dist/

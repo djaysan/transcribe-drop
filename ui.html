@@ -10,12 +10,21 @@
   * { box-sizing:border-box; margin:0; padding:0; }
   html,body { height:100%; }
   body { background:var(--bg); color:var(--t1); font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-         padding:26px; display:flex; flex-direction:column; gap:18px; -webkit-user-select:none; user-select:none; }
+         padding:26px; display:flex; flex-direction:column; gap:16px; -webkit-user-select:none; user-select:none; }
   .brand { display:flex; align-items:center; gap:10px; }
   .brand .mark { width:30px; height:30px; border-radius:9px; background:linear-gradient(135deg,var(--accent),var(--accent2));
                  display:flex; align-items:center; justify-content:center; font-size:16px; }
   .brand h1 { font-size:16px; font-weight:650; letter-spacing:-.01em; }
   .brand p { font-size:11.5px; color:var(--t3); margin-top:1px; }
+
+  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); }
+  .tab { background:none; border:none; color:var(--t2); font-size:13.5px; font-weight:600; cursor:pointer;
+         padding:9px 14px; border-bottom:2px solid transparent; margin-bottom:-1px; }
+  .tab:hover { color:var(--t1); }
+  .tab.active { color:var(--t1); border-bottom-color:var(--accent); }
+
+  .view { flex:1; min-height:0; display:none; flex-direction:column; gap:16px; }
+  .view.active { display:flex; }
 
   .drop { border:1.5px dashed var(--line); border-radius:14px; background:var(--card); padding:22px;
           display:flex; flex-direction:column; gap:14px; transition:border-color .15s, background .15s; }
@@ -30,8 +39,6 @@
   .btn:hover { filter:brightness(1.1); }
   .btn:disabled { opacity:.5; cursor:default; filter:none; }
   .btn.ghost { background:#22222c; color:var(--t1); }
-  .or { text-align:center; font-size:11.5px; color:var(--t3); }
-  .picked { font-size:12.5px; color:var(--accent2); word-break:break-all; }
   .hint { font-size:11.5px; color:var(--t3); text-align:center; }
   .opts { display:flex; align-items:center; gap:16px; flex-wrap:wrap; font-size:12.5px; color:var(--t2); }
   .opts label { display:flex; align-items:center; gap:7px; }
@@ -40,6 +47,7 @@
   .opts select:focus { border-color:var(--accent); }
   .opts .chk { cursor:pointer; }
   .opts input[type=checkbox] { accent-color:var(--accent); }
+  .picked { font-size:12.5px; color:var(--accent2); word-break:break-all; }
 
   .go { padding:13px; font-size:14.5px; }
   .status { font-size:13px; color:var(--t2); min-height:20px; display:flex; align-items:center; gap:8px; }
@@ -58,6 +66,56 @@
   textarea { flex:1; background:var(--card); border:1px solid var(--line); border-radius:12px; color:var(--t1);
              padding:14px; font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; resize:none; outline:none;
              -webkit-user-select:text; user-select:text; }
+
+  /* --- Channels dashboard --- */
+  .scroll { flex:1; min-height:0; overflow-y:auto; }
+  .ch-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; }
+  .ch-card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; cursor:pointer;
+             display:flex; flex-direction:column; gap:8px; transition:border-color .15s; }
+  .ch-card:hover { border-color:var(--accent); }
+  .ch-card .row { display:flex; align-items:center; gap:8px; }
+  .ch-card .plat { font-size:15px; }
+  .ch-card .name { font-weight:600; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ch-card .meta { font-size:11.5px; color:var(--t3); }
+  .empty { color:var(--t3); font-size:13px; text-align:center; padding:30px 0; }
+
+  .settings-panel { background:var(--card); border:1px solid var(--line); border-radius:12px;
+                    padding:16px; display:flex; flex-direction:column; gap:10px; }
+  .settings-panel label { font-size:12px; color:var(--t2); font-weight:600; display:flex;
+                          align-items:center; gap:8px; }
+  .settings-panel input[type=password], .settings-panel input[type=text] {
+      flex:1; background:#0f0f16; border:1px solid var(--line); color:var(--t1);
+      padding:10px 12px; border-radius:9px; font-size:13px; outline:none; }
+  .settings-panel input:focus { border-color:var(--accent); }
+  .settings-panel textarea { background:#0f0f16; border:1px solid var(--line); color:var(--t1);
+      padding:10px 12px; border-radius:9px; font-size:12.5px; line-height:1.5; outline:none; resize:vertical;
+      font-family:ui-monospace,SFMono-Regular,Menlo,monospace; -webkit-user-select:text; user-select:text; }
+  .settings-panel textarea:focus { border-color:var(--accent); }
+  .pill { font-size:10.5px; font-weight:600; padding:2px 8px; border-radius:20px; }
+  .pill.on { background:rgba(74,222,128,.15); color:var(--ok); }
+  .pill.off { background:#22222c; color:var(--t3); }
+
+  .detail-head { display:flex; align-items:center; gap:12px; }
+  .detail-head .name { font-weight:650; font-size:15px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .detail-head .btn { padding:8px 12px; font-size:12.5px; }
+
+  .vid-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:14px; }
+  .vcard { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden;
+           position:relative; display:flex; flex-direction:column; }
+  .vcard .thumb { width:100%; aspect-ratio:16/9; object-fit:cover; background:#0f0f16; display:block; }
+  .vcard .thumb.noimg { display:flex; align-items:center; justify-content:center; font-size:26px; opacity:.5; }
+  .vcard.pending .thumb { opacity:.45; }
+  .vcard .vtitle { font-size:12.5px; line-height:1.4; padding:10px 12px; display:-webkit-box;
+                   -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .info { position:absolute; top:8px; right:8px; width:24px; height:24px; border-radius:50%;
+          background:rgba(14,14,19,.85); border:1px solid var(--line); color:var(--t1); font-size:13px;
+          display:flex; align-items:center; justify-content:center; cursor:default; }
+  .badge { position:absolute; top:8px; left:8px; font-size:10.5px; font-weight:600; padding:3px 7px;
+           border-radius:6px; background:rgba(14,14,19,.85); color:var(--t2); }
+  .pop { position:absolute; left:8px; right:8px; top:36px; z-index:5; background:#050509; border:1px solid var(--line);
+         border-radius:10px; padding:11px 12px; font-size:12px; line-height:1.5; color:var(--t1);
+         box-shadow:0 8px 24px rgba(0,0,0,.5); display:none; -webkit-user-select:text; user-select:text; }
+  .info:hover + .pop, .pop:hover { display:block; }
 </style>
 </head>
 <body>
@@ -65,56 +123,124 @@
     <div class="mark">🎙️</div>
     <div>
       <h1>Transcribe Drop</h1>
-      <p>Paste a link or choose a video — transcribed on your Mac, no cloud.</p>
+      <p>Transcribe a video, or follow a channel — all on your Mac.</p>
     </div>
   </div>
 
-  <div class="drop" id="drop">
+  <div class="tabs">
+    <button class="tab active" data-view="transcribe">Transcribe</button>
+    <button class="tab" data-view="channels">Channels</button>
+  </div>
+
+  <!-- ============ Transcribe (Phase 1) ============ -->
+  <div id="view-transcribe" class="view active">
+    <div class="drop" id="drop">
+      <div class="field">
+        <input type="url" id="url" placeholder="Paste a video URL (YouTube, Facebook, …)" autocomplete="off" spellcheck="false">
+        <button class="btn ghost" id="pick">Choose video…</button>
+      </div>
+      <div class="picked" id="picked" style="display:none"></div>
+      <div class="opts">
+        <label>Language
+          <select id="lang">
+            <option value="">Auto-detect</option>
+            <option value="en">English</option>
+            <option value="fr">French</option>
+            <option value="pl">Polish</option>
+            <option value="es">Spanish</option>
+            <option value="de">German</option>
+            <option value="it">Italian</option>
+            <option value="pt">Portuguese</option>
+            <option value="nl">Dutch</option>
+          </select>
+        </label>
+        <label class="chk"><input type="checkbox" id="translate"> Translate to English</label>
+      </div>
+      <div class="hint">or drop a video onto the app icon in your Dock</div>
+    </div>
+
+    <button class="btn go" id="go">Transcribe</button>
+    <div class="status" id="status"></div>
+
+    <div class="result" id="result">
+      <div class="top">
+        <div class="title" id="rtitle"></div>
+        <div class="acts">
+          <button class="btn ghost" id="copy">Copy</button>
+          <button class="btn ghost" id="reveal">Reveal</button>
+          <button class="btn ghost" id="folder">Folder</button>
+        </div>
+      </div>
+      <textarea id="text" readonly spellcheck="false"></textarea>
+    </div>
+  </div>
+
+  <!-- ============ Channels (Phase 2) ============ -->
+  <div id="view-channels" class="view">
     <div class="field">
-      <input type="url" id="url" placeholder="Paste a video URL (YouTube, Facebook, …)" autocomplete="off" spellcheck="false">
-      <button class="btn ghost" id="pick">Choose video…</button>
+      <input type="url" id="churl" placeholder="Paste a YouTube channel (@handle or /channel URL)" autocomplete="off" spellcheck="false">
+      <button class="btn" id="follow">Follow</button>
+      <button class="btn ghost" id="addclips" title="Add individual video/reel URLs">＋ Clips</button>
+      <button class="btn ghost" id="gear" title="Settings">⚙</button>
     </div>
-    <div class="picked" id="picked" style="display:none"></div>
-    <div class="opts">
-      <label>Language
-        <select id="lang">
-          <option value="">Auto-detect</option>
-          <option value="en">English</option>
-          <option value="fr">French</option>
-          <option value="pl">Polish</option>
-          <option value="es">Spanish</option>
-          <option value="de">German</option>
-          <option value="it">Italian</option>
-          <option value="pt">Portuguese</option>
-          <option value="nl">Dutch</option>
-        </select>
-      </label>
-      <label class="chk"><input type="checkbox" id="translate"> Translate to English</label>
+
+    <div class="settings-panel" id="clips-panel" style="display:none">
+      <label>Add clips — one video or reel URL per line (Facebook, YouTube, …)</label>
+      <textarea id="clipurls" rows="4" placeholder="https://www.facebook.com/reel/…
+https://www.youtube.com/watch?v=…"></textarea>
+      <div style="display:flex; justify-content:flex-end">
+        <button class="btn" id="save-clips">Add</button>
+      </div>
+      <div class="hint" style="text-align:left">These are transcribed one by one (Facebook has no captions, so it uses on-device Whisper). Following a whole Facebook profile isn't possible — its reels tab can't be listed — so paste the reels you want here.</div>
     </div>
-    <div class="hint">or drop a video onto the app icon in your Dock</div>
-  </div>
 
-  <button class="btn go" id="go">Transcribe</button>
-  <div class="status" id="status"></div>
+    <div class="settings-panel" id="settings" style="display:none">
+      <label>Anthropic API key <span class="pill off" id="key-state">not set</span></label>
+      <div class="field">
+        <input type="password" id="apikey" placeholder="sk-ant-…  (paste to turn on AI summaries)" autocomplete="off" spellcheck="false">
+        <button class="btn" id="save-key">Save</button>
+      </div>
+      <label>Context file — tunes summaries to what you're working on</label>
+      <div class="field">
+        <input type="text" id="ctxpath" placeholder="context.md" autocomplete="off" spellcheck="false">
+        <button class="btn ghost" id="save-ctx">Save</button>
+      </div>
+      <div class="hint" style="text-align:left">Stored locally in <b>settings.json</b> (gitignored, never uploaded). Clear the key to turn summaries off. See docs/CONTEXT-PROMPT.md to build your context file.</div>
+    </div>
 
-  <div class="result" id="result">
-    <div class="top">
-      <div class="title" id="rtitle"></div>
-      <div class="acts">
-        <button class="btn ghost" id="copy">Copy</button>
-        <button class="btn ghost" id="reveal">Reveal</button>
-        <button class="btn ghost" id="folder">Folder</button>
+    <div class="status" id="proc"></div>
+
+    <div class="scroll">
+      <div id="ch-list" class="ch-grid"></div>
+      <div id="ch-detail" style="display:none">
+        <div class="detail-head">
+          <button class="btn ghost" id="back">← Channels</button>
+          <span class="name" id="detail-name"></span>
+          <button class="btn ghost" id="history">Get more history</button>
+        </div>
+        <div id="vid-grid" class="vid-grid" style="margin-top:14px"></div>
       </div>
     </div>
-    <textarea id="text" readonly spellcheck="false"></textarea>
   </div>
 
 <script>
   let pickedFile = null;   // filesystem path chosen/dropped
   let lastFile = null;     // saved transcript path
+  let openCid = null;      // channel whose video grid is showing
   const $ = id => document.getElementById(id);
   const api = () => window.pywebview.api;
+  const esc = s => (s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
+  // ----- tabs -----
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(x => x.classList.remove('active'));
+    t.classList.add('active');
+    $('view-' + t.dataset.view).classList.add('active');
+    if (t.dataset.view === 'channels') loadChannels();
+  }));
+
+  // ===== Transcribe tab =====
   function setStatus(msg, kind = '') {
     const el = $('status');
     el.className = 'status ' + kind;
@@ -126,7 +252,6 @@
     else { $('picked').style.display = 'none'; }
   }
 
-  // Python → UI callbacks
   window.onStatus = msg => setStatus(msg);
   window.onFail = msg => { setStatus(msg, 'err'); $('go').disabled = false; };
   window.onDone = ({ title, text, file }) => {
@@ -156,12 +281,140 @@
   $('reveal').addEventListener('click', () => { if (lastFile) api().reveal(lastFile); });
   $('folder').addEventListener('click', () => api().open_output());
 
-  // Visual drag feedback (real file path comes from the Dock-icon droplet or the picker)
   const drop = $('drop');
   ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('hot'); }));
   ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('hot'); }));
 
-  // On launch, preload a file that was dropped on the app icon.
+  // ===== Channels tab =====
+  function setProc(msg) {
+    const el = $('proc');
+    const busy = msg && !/^(Up to date|$)/.test(msg) && !/check the link/.test(msg);
+    el.innerHTML = (busy ? '<span class="spin"></span>' : '') + esc(msg || '');
+  }
+
+  async function loadChannels() {
+    renderChannels(await api().get_channels());
+    loadSettings();
+    api().refresh_channels();   // check for new uploads in the background
+  }
+
+  // ----- settings panel -----
+  function showSettings(s) {
+    const pill = $('key-state');
+    pill.textContent = s.has_key ? 'set' : 'not set';
+    pill.className = 'pill ' + (s.has_key ? 'on' : 'off');
+    $('apikey').value = '';                       // never echo the key back
+    $('apikey').placeholder = s.has_key ? '•••••••••• (saved) — paste to replace' : 'sk-ant-…  (paste to turn on AI summaries)';
+    $('ctxpath').value = s.context_md || 'context.md';
+  }
+  async function loadSettings() { showSettings(await api().get_settings()); }
+
+  $('gear').addEventListener('click', () => {
+    const p = $('settings');
+    p.style.display = p.style.display === 'none' ? 'flex' : 'none';
+  });
+  $('save-key').addEventListener('click', async () => {
+    setProc('Saving key…');
+    showSettings(await api().save_api_key($('apikey').value));
+    setProc('');
+  });
+  $('save-ctx').addEventListener('click', async () => {
+    showSettings(await api().save_context_path($('ctxpath').value));
+    setProc('Context file saved.');
+  });
+
+  // ----- add clips (paste individual video/reel URLs) -----
+  $('addclips').addEventListener('click', () => {
+    const p = $('clips-panel');
+    p.style.display = p.style.display === 'none' ? 'flex' : 'none';
+  });
+  $('save-clips').addEventListener('click', () => {
+    const urls = $('clipurls').value.split('\n').map(s => s.trim()).filter(Boolean);
+    if (!urls.length) return;
+    $('clipurls').value = '';
+    $('clips-panel').style.display = 'none';
+    setProc('Reading clip details…');
+    api().add_videos(urls);
+  });
+
+  function renderChannels(list) {
+    const box = $('ch-list');
+    if (!list.length) {
+      box.innerHTML = '<div class="empty">Follow a YouTube channel to list, transcribe and summarise its latest videos.</div>';
+    } else {
+      const icon = p => p === 'youtube' ? '▶️' : p === 'manual' ? '🔗' : '📺';
+      box.innerHTML = list.map(c => `
+        <div class="ch-card" data-cid="${c.id}" data-plat="${c.platform}">
+          <div class="row"><span class="plat">${icon(c.platform)}</span>
+            <span class="name">${esc(c.name)}</span></div>
+          <div class="meta">${c.done}/${c.total} transcribed</div>
+        </div>`).join('');
+      box.querySelectorAll('.ch-card').forEach(el =>
+        el.addEventListener('click', () =>
+          openChannel(el.dataset.cid, el.querySelector('.name').textContent, el.dataset.plat)));
+    }
+    // keep the detail header progress in sync while processing runs
+    if (openCid) {
+      const c = list.find(x => x.id === openCid);
+      if (c) $('detail-name').textContent = `${c.name} — ${c.done}/${c.total} transcribed`;
+    }
+  }
+
+  async function openChannel(cid, name, plat) {
+    openCid = cid;
+    $('ch-list').style.display = 'none';
+    $('ch-detail').style.display = 'block';
+    $('detail-name').textContent = name;
+    $('history').style.display = plat === 'manual' ? 'none' : '';  // clips list has nothing to page
+    renderVideos(await api().get_videos(cid));
+  }
+
+  function vcardHTML(v) {
+    const pop = v.summary ? esc(v.summary)
+      : v.done ? 'Transcribed. Add an ANTHROPIC_API_KEY (.env) for AI summaries.'
+      : 'Transcribing…';
+    const thumb = v.thumb
+      ? `<img class="thumb" src="${v.thumb}" loading="lazy">`
+      : `<div class="thumb noimg">🎬</div>`;
+    return `
+      <div class="vcard ${v.done ? '' : 'pending'}" data-id="${v.id}">
+        ${thumb}
+        ${v.done ? '' : '<div class="badge">transcribing…</div>'}
+        <div class="info">ℹ</div><div class="pop">${pop}</div>
+        <div class="vtitle">${esc(v.title)}</div>
+      </div>`;
+  }
+
+  function renderVideos(vids) {
+    $('vid-grid').innerHTML = vids.map(vcardHTML).join('');
+  }
+
+  window.onChannels = renderChannels;
+  window.onVideos = ({ cid, videos }) => { if (cid === openCid) renderVideos(videos); };
+  window.onVideoDone = ({ cid, video }) => {
+    if (cid !== openCid) return;
+    const old = $('vid-grid').querySelector(`.vcard[data-id="${video.id}"]`);
+    if (old) old.outerHTML = vcardHTML(video);
+  };
+  window.onProc = setProc;
+
+  function follow() {
+    const url = $('churl').value.trim();
+    if (!url) return;
+    $('churl').value = '';
+    setProc('Reading channel…');
+    api().add_channel(url);
+  }
+  $('follow').addEventListener('click', follow);
+  $('churl').addEventListener('keydown', e => { if (e.key === 'Enter') follow(); });
+  $('back').addEventListener('click', () => {
+    openCid = null;
+    $('ch-detail').style.display = 'none';
+    $('ch-list').style.display = 'grid';
+  });
+  $('history').addEventListener('click', () => { if (openCid) api().more_history(openCid); });
+
+  // On launch, preload a file dropped on the app icon.
   window.addEventListener('pywebviewready', async () => {
     const p = await api().get_preload();
     if (p) setPicked(p);

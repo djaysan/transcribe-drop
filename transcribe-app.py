@@ -17,6 +17,8 @@ from pathlib import Path
 
 import webview
 
+import channels  # Phase 2: channel intelligence (data layer)
+
 APP_DIR = Path(__file__).resolve().parent
 # Multilingual model (handles English, French, Polish, … via the language picker /
 # auto-detect). Swap to ggml-small.bin for higher accuracy at the cost of speed.
@@ -40,6 +42,7 @@ def safe_name(title: str) -> str:
 class Api:
     def __init__(self, preload=None):
         self._preload = preload
+        self._proc_lock = threading.Lock()  # serialises the channel-processing worker
 
     # Path of a file dropped onto the .app icon (or None), read once by the UI.
     def get_preload(self):
@@ -139,14 +142,139 @@ class Api:
         self._status('Downloading the transcription model (one time, ~148 MB)…')
         urllib.request.urlretrieve(MODEL_URL, MODEL)
 
+    # --- Phase 2: channel intelligence -----------------------------------
+    # Reads are synchronous (fast SQLite); anything hitting the network runs on a
+    # worker thread and pushes results to the UI via onChannels / onVideos / etc.
+
+    def get_channels(self):
+        return channels.list_channels()
+
+    def get_videos(self, cid):
+        return channels.channel_videos(cid)
+
+    def has_ai(self):
+        return channels.has_summaries()
+
+    # --- settings (API key + context file), entered in the UI ---
+    def get_settings(self):
+        return channels.settings_view()
+
+    def save_api_key(self, key):
+        channels.save_api_key(key)
+        # A key just appeared → summarise anything already transcribed.
+        threading.Thread(target=self._backfill_summaries, daemon=True).start()
+        return channels.settings_view()
+
+    def save_context_path(self, path):
+        channels.set_context_path(path)
+        return channels.settings_view()
+
+    def _backfill_summaries(self):
+        if not channels.has_summaries():
+            return
+        with self._proc_lock:
+            todo = channels.pending_summaries()
+            for i, p in enumerate(todo, 1):
+                self._emit('onProc', f'Summarising {i} of {len(todo)}…')
+                try:
+                    channels.summarize_video(p['id'])
+                except Exception:  # noqa: BLE001 — best-effort
+                    continue
+                self._emit('onVideoDone', {'cid': p['channel_id'], 'video': channels.get_video(p['id'])})
+            self._emit('onProc', 'Up to date.' if todo else '')
+
+    def add_channel(self, url):
+        threading.Thread(target=self._add_channel, args=(url,), daemon=True).start()
+        return True
+
+    def _add_channel(self, url):
+        try:
+            self._emit('onProc', 'Reading channel…')
+            ch = channels.add_channel((url or '').strip())
+            self._emit('onChannels', channels.list_channels())
+            self._emit('onProc', f"Following {ch['name']} — fetching transcripts…")
+            self._process()
+        except subprocess.CalledProcessError:
+            self._emit('onProc', "Couldn't read that channel — check the link (YouTube @handle or URL).")
+        except Exception as e:  # noqa: BLE001
+            self._emit('onProc', f'Error: {e}')
+
+    def add_videos(self, urls):
+        threading.Thread(target=self._add_videos, args=(urls,), daemon=True).start()
+        return True
+
+    def _add_videos(self, urls):
+        try:
+            self._emit('onProc', 'Reading clip details…')
+            res = channels.add_videos(urls or [])
+            self._emit('onChannels', channels.list_channels())
+            self._emit('onProc', f"Added {res['added']} clip(s) — transcribing…")
+            self._process()
+        except Exception as e:  # noqa: BLE001
+            self._emit('onProc', f'Error: {e}')
+
+    def more_history(self, cid):
+        threading.Thread(target=self._more_history, args=(cid,), daemon=True).start()
+        return True
+
+    def _more_history(self, cid):
+        try:
+            n = channels.get_more_history(cid)
+            self._emit('onChannels', channels.list_channels())
+            self._emit('onVideos', {'cid': cid, 'videos': channels.channel_videos(cid)})
+            self._emit('onProc', f'Added {n} older videos — fetching transcripts…')
+            self._process()
+        except Exception as e:  # noqa: BLE001
+            self._emit('onProc', f'Error: {e}')
+
+    # Called once on launch: check followed channels for new uploads, then fill gaps.
+    def refresh_channels(self):
+        threading.Thread(target=self._refresh_all, daemon=True).start()
+        return True
+
+    def _refresh_all(self):
+        try:
+            if not channels.list_channels():
+                return
+            for ch in channels.list_channels():
+                channels.refresh_channel(ch['id'])
+            self._emit('onChannels', channels.list_channels())
+            self._process()
+        except Exception:  # noqa: BLE001 — best-effort background refresh
+            pass
+
+    def _process(self):
+        # Drain videos missing a transcript: captions-first, then optional AI summary.
+        with self._proc_lock:
+            pending = channels.pending_videos()
+            total = len(pending)
+            ai = channels.has_summaries()
+            for i, p in enumerate(pending, 1):
+                self._emit('onProc', f'Transcribing {i} of {total}…')
+                try:
+                    text, _ = channels.transcribe_video(p['id'])
+                except Exception:  # noqa: BLE001 — skip a bad video, keep going
+                    continue
+                if not text:
+                    continue
+                if ai:
+                    try:
+                        channels.summarize_video(p['id'])
+                    except Exception:  # noqa: BLE001 — transcript already saved; summary is best-effort
+                        pass
+                self._emit('onVideoDone', {'cid': p['channel_id'], 'video': channels.get_video(p['id'])})
+            self._emit('onChannels', channels.list_channels())
+            self._emit('onProc', 'Up to date.' if total else '')
+
 
 def main():
     global window
+    channels.init_db()
     preload = sys.argv[1] if len(sys.argv) > 1 else None
     api = Api(preload)
     window = webview.create_window(
         'Transcribe Drop', str(APP_DIR / 'ui.html'),
-        js_api=api, width=680, height=640, min_size=(560, 560),
+        js_api=api, width=860, height=720, min_size=(640, 600),
     )
     webview.start()
 

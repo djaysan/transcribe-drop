@@ -22,8 +22,10 @@ if [ -n "$MISSING" ]; then
   fi
 fi
 
-echo "==> Installing the Python UI package (pywebview)…"
-"$PY" -m pip install --quiet pywebview
+echo "==> Installing the Python packages (pywebview, anthropic)…"
+# anthropic is only used for the optional AI summaries (Channels tab). The app
+# runs fine without an API key; summaries are simply skipped until one is set.
+"$PY" -m pip install --quiet pywebview anthropic
 
 echo "==> Building 'Transcribe Drop.app'…"
 cat > /tmp/transcribe-drop-droplet.applescript <<EOF
