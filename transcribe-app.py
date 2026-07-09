@@ -20,12 +20,14 @@ import webview
 import channels  # Phase 2: channel intelligence (data layer)
 
 APP_DIR = Path(__file__).resolve().parent
-# Multilingual model (handles English, French, Polish, … via the language picker /
-# auto-detect). Swap to ggml-small.bin for higher accuracy at the cost of speed.
-MODEL = APP_DIR / 'models' / 'ggml-base.bin'
-MODEL_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin'
-OUTPUT_DIR = APP_DIR / 'output'
-FILE_TYPES = ('Video/Audio (*.mp4;*.mov;*.mkv;*.webm;*.m4a;*.mp3;*.wav;*.aac;*.flac)',)
+# User data (model, transcripts) lives in Application Support, not the app bundle —
+# see channels.DATA_DIR. Multilingual model handles English/French/Polish/… ;
+# swap to ggml-small.bin for higher accuracy at the cost of speed.
+MODEL = channels.MODEL
+MODEL_URL = channels.MODEL_URL
+OUTPUT_DIR = channels.DATA_DIR / 'output'
+# pywebview's filter description allows only word chars + spaces (no '/'), so keep it plain.
+FILE_TYPES = ('Media files (*.mp4;*.mov;*.mkv;*.webm;*.m4a;*.mp3;*.wav;*.aac;*.flac)',)
 
 window = None
 
@@ -152,6 +154,15 @@ class Api:
     def get_videos(self, cid):
         return channels.channel_videos(cid)
 
+    def video_detail(self, vid):
+        return channels.video_detail(vid)
+
+    def open_url(self, url):
+        # Open a video in the user's default browser (guarded to http/https).
+        if url and url.startswith(('http://', 'https://')):
+            subprocess.run(['/usr/bin/open', url])
+        return True
+
     def has_ai(self):
         return channels.has_summaries()
 
@@ -161,27 +172,28 @@ class Api:
 
     def save_api_key(self, key):
         channels.save_api_key(key)
-        # A key just appeared → summarise anything already transcribed.
-        threading.Thread(target=self._backfill_summaries, daemon=True).start()
         return channels.settings_view()
 
     def save_context_path(self, path):
         channels.set_context_path(path)
         return channels.settings_view()
 
-    def _backfill_summaries(self):
-        if not channels.has_summaries():
-            return
-        with self._proc_lock:
-            todo = channels.pending_summaries()
-            for i, p in enumerate(todo, 1):
-                self._emit('onProc', f'Summarising {i} of {len(todo)}…')
-                try:
-                    channels.summarize_video(p['id'])
-                except Exception:  # noqa: BLE001 — best-effort
-                    continue
-                self._emit('onVideoDone', {'cid': p['channel_id'], 'video': channels.get_video(p['id'])})
-            self._emit('onProc', 'Up to date.' if todo else '')
+    # On-demand summary: generated the first time a video's detail is opened.
+    def summarize_now(self, vid):
+        try:
+            channels.summarize_video(vid)
+        except Exception:  # noqa: BLE001 — no key / API error → detail just shows no summary
+            pass
+        return channels.video_detail(vid)
+
+    # Native "Choose file" dialog for the context .md — no path typing.
+    def pick_context(self):
+        res = window.create_file_dialog(
+            webview.OPEN_DIALOG, allow_multiple=False,
+            file_types=('Text files (*.md;*.markdown;*.txt)', 'All files (*.*)'))
+        if res:
+            channels.set_context_path(res[0])
+        return channels.settings_view()
 
     def add_channel(self, url):
         threading.Thread(target=self._add_channel, args=(url,), daemon=True).start()
@@ -199,19 +211,33 @@ class Api:
         except Exception as e:  # noqa: BLE001
             self._emit('onProc', f'Error: {e}')
 
-    def add_videos(self, urls):
-        threading.Thread(target=self._add_videos, args=(urls,), daemon=True).start()
+    def get_collections(self):
+        return channels.list_collections()
+
+    def add_videos(self, urls, collection='Saved clips'):
+        threading.Thread(target=self._add_videos, args=(urls, collection), daemon=True).start()
         return True
 
-    def _add_videos(self, urls):
+    def _add_videos(self, urls, collection):
         try:
             self._emit('onProc', 'Reading clip details…')
-            res = channels.add_videos(urls or [])
+            res = channels.add_videos(urls or [], collection)
             self._emit('onChannels', channels.list_channels())
-            self._emit('onProc', f"Added {res['added']} clip(s) — transcribing…")
+            self._emit('onProc', f"Added {res['added']} clip(s) to {res['name']} — transcribing…")
             self._process()
         except Exception as e:  # noqa: BLE001
             self._emit('onProc', f'Error: {e}')
+
+    # --- starring / watch-later checklist ---
+    def get_starred(self):
+        return channels.starred_videos()
+
+    def toggle_star(self, vid):
+        return channels.toggle_star(vid)
+
+    def set_watched(self, vid, val):
+        channels.set_watched(vid, val)
+        return True
 
     def more_history(self, cid):
         threading.Thread(target=self._more_history, args=(cid,), daemon=True).start()
@@ -239,16 +265,16 @@ class Api:
             for ch in channels.list_channels():
                 channels.refresh_channel(ch['id'])
             self._emit('onChannels', channels.list_channels())
-            self._process()
+            self._process()   # transcribe any new/pending videos (summaries are on-demand)
         except Exception:  # noqa: BLE001 — best-effort background refresh
             pass
 
     def _process(self):
-        # Drain videos missing a transcript: captions-first, then optional AI summary.
+        # Drain videos missing a transcript (captions-first). Summaries are generated
+        # on demand when a video is opened — see summarize_now — to control token cost.
         with self._proc_lock:
             pending = channels.pending_videos()
             total = len(pending)
-            ai = channels.has_summaries()
             for i, p in enumerate(pending, 1):
                 self._emit('onProc', f'Transcribing {i} of {total}…')
                 try:
@@ -257,11 +283,6 @@ class Api:
                     continue
                 if not text:
                     continue
-                if ai:
-                    try:
-                        channels.summarize_video(p['id'])
-                    except Exception:  # noqa: BLE001 — transcript already saved; summary is best-effort
-                        pass
                 self._emit('onVideoDone', {'cid': p['channel_id'], 'video': channels.get_video(p['id'])})
             self._emit('onChannels', channels.list_channels())
             self._emit('onProc', 'Up to date.' if total else '')

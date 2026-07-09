@@ -91,6 +91,10 @@
       padding:10px 12px; border-radius:9px; font-size:12.5px; line-height:1.5; outline:none; resize:vertical;
       font-family:ui-monospace,SFMono-Regular,Menlo,monospace; -webkit-user-select:text; user-select:text; }
   .settings-panel textarea:focus { border-color:var(--accent); }
+  .linky { background:none; border:none; color:var(--accent2); font-size:11.5px; font-weight:600;
+           cursor:pointer; padding:0; text-decoration:underline; }
+  .ctx-help { display:flex; flex-direction:column; gap:8px; background:#0f0f16; border:1px solid var(--line);
+              border-radius:10px; padding:12px; }
   .pill { font-size:10.5px; font-weight:600; padding:2px 8px; border-radius:20px; }
   .pill.on { background:rgba(74,222,128,.15); color:var(--ok); }
   .pill.off { background:#22222c; color:var(--t3); }
@@ -101,21 +105,50 @@
 
   .vid-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:14px; }
   .vcard { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden;
-           position:relative; display:flex; flex-direction:column; }
+           position:relative; display:flex; flex-direction:column; cursor:pointer; transition:border-color .15s; }
+  .vcard:hover { border-color:var(--accent); }
   .vcard .thumb { width:100%; aspect-ratio:16/9; object-fit:cover; background:#0f0f16; display:block; }
   .vcard .thumb.noimg { display:flex; align-items:center; justify-content:center; font-size:26px; opacity:.5; }
   .vcard.pending .thumb { opacity:.45; }
   .vcard .vtitle { font-size:12.5px; line-height:1.4; padding:10px 12px; display:-webkit-box;
                    -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-  .info { position:absolute; top:8px; right:8px; width:24px; height:24px; border-radius:50%;
-          background:rgba(14,14,19,.85); border:1px solid var(--line); color:var(--t1); font-size:13px;
-          display:flex; align-items:center; justify-content:center; cursor:default; }
+  .vcard .rel { position:absolute; top:8px; right:8px; font-size:12px; }
   .badge { position:absolute; top:8px; left:8px; font-size:10.5px; font-weight:600; padding:3px 7px;
            border-radius:6px; background:rgba(14,14,19,.85); color:var(--t2); }
-  .pop { position:absolute; left:8px; right:8px; top:36px; z-index:5; background:#050509; border:1px solid var(--line);
-         border-radius:10px; padding:11px 12px; font-size:12px; line-height:1.5; color:var(--t1);
-         box-shadow:0 8px 24px rgba(0,0,0,.5); display:none; -webkit-user-select:text; user-select:text; }
-  .info:hover + .pop, .pop:hover { display:block; }
+  .vstar { position:absolute; top:6px; right:34px; width:24px; height:24px; border:none; border-radius:50%;
+           background:rgba(14,14,19,.85); color:var(--t3); font-size:13px; cursor:pointer; z-index:3;
+           display:flex; align-items:center; justify-content:center; }
+  .vstar.on { color:#fbbf24; }
+  .vstar:hover { color:#fbbf24; }
+
+  .saved-bar { width:100%; text-align:left; background:var(--card); border:1px solid var(--line);
+               border-radius:12px; padding:12px 14px; margin-bottom:12px; color:var(--t1);
+               font-size:13.5px; font-weight:600; cursor:pointer; }
+  .saved-bar:hover { border-color:var(--accent); }
+  .saved-bar #saved-n { color:#fbbf24; }
+
+  .saved-list { display:flex; flex-direction:column; gap:8px; }
+  .srow { display:flex; align-items:center; gap:11px; background:var(--card); border:1px solid var(--line);
+          border-radius:10px; padding:9px 11px; }
+  .srow.watched { opacity:.5; }
+  .srow.watched .stitle { text-decoration:line-through; }
+  .srow .schk { width:17px; height:17px; accent-color:var(--ok); cursor:pointer; flex:none; }
+  .srow .sthumb { width:64px; height:36px; object-fit:cover; border-radius:5px; background:#0f0f16; flex:none; }
+  .srow .sinfo { flex:1; min-width:0; cursor:pointer; }
+  .srow .stitle { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .srow .schan { font-size:11px; color:var(--t3); }
+  .srow .btn { padding:6px 10px; font-size:12px; }
+
+  .vd-body { display:flex; flex-direction:column; gap:12px; padding-top:14px; }
+  .vd-summary { font-size:14px; line-height:1.65; color:var(--t1); white-space:pre-wrap;
+                -webkit-user-select:text; user-select:text; }
+  .vd-transcript { font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--t2);
+                   background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px;
+                   white-space:pre-wrap; max-height:340px; overflow-y:auto;
+                   -webkit-user-select:text; user-select:text; }
+  #vd-watch { padding:8px 12px; font-size:12.5px; }
+  #vd-star { padding:8px 12px; font-size:12.5px; }
+  #vd-star.on { color:#fbbf24; }
 </style>
 </head>
 <body>
@@ -185,7 +218,12 @@
     </div>
 
     <div class="settings-panel" id="clips-panel" style="display:none">
-      <label>Add clips — one video or reel URL per line (Facebook, YouTube, …)</label>
+      <label>Collection — groups these clips (type a new name or pick an existing one)</label>
+      <div class="field">
+        <input type="text" id="clip-collection" list="collections" placeholder="Saved clips" autocomplete="off" spellcheck="false">
+      </div>
+      <datalist id="collections"></datalist>
+      <label>Video or reel URLs — one per line (Facebook, YouTube, …)</label>
       <textarea id="clipurls" rows="4" placeholder="https://www.facebook.com/reel/…
 https://www.youtube.com/watch?v=…"></textarea>
       <div style="display:flex; justify-content:flex-end">
@@ -200,18 +238,31 @@ https://www.youtube.com/watch?v=…"></textarea>
         <input type="password" id="apikey" placeholder="sk-ant-…  (paste to turn on AI summaries)" autocomplete="off" spellcheck="false">
         <button class="btn" id="save-key">Save</button>
       </div>
-      <label>Context file — tunes summaries to what you're working on</label>
+      <label>Context file — tunes summaries to what you're working on <span class="pill off" id="ctx-state">none</span> <button class="linky" id="ctx-help-toggle">how do I make this?</button></label>
       <div class="field">
-        <input type="text" id="ctxpath" placeholder="context.md" autocomplete="off" spellcheck="false">
-        <button class="btn ghost" id="save-ctx">Save</button>
+        <input type="text" id="ctxpath" placeholder="No file chosen" readonly>
+        <button class="btn" id="pick-ctx">Choose file…</button>
       </div>
-      <div class="hint" style="text-align:left">Stored locally in <b>settings.json</b> (gitignored, never uploaded). Clear the key to turn summaries off. See docs/CONTEXT-PROMPT.md to build your context file.</div>
+
+      <div class="ctx-help" id="ctx-help" style="display:none">
+        <div class="hint" style="text-align:left">Copy the prompt below into Claude (or Claude Code), replace the <b>[brackets]</b> with a couple of sentences about yourself, and save the reply as <b>context.md</b> in this app's folder. Then the summaries will flag which videos matter to <i>you</i>.</div>
+        <textarea id="ctx-prompt" rows="7" readonly>Write me a short context file (context.md) that a local app will read to decide which videos are worth my time. Keep it under 200 words, plain text, no markdown headings. Cover: what I do, the tools and stack I use, the projects I'm actively working on right now, the topics I want to keep up with, and anything I explicitly do NOT care about. Write it as terse notes, not prose — it's for a model to skim, not a human to read.
+
+Here's the raw material: [describe yourself in a few sentences — role, stack, current projects, what you're trying to learn, what to ignore]</textarea>
+        <div style="display:flex; justify-content:flex-end">
+          <button class="btn" id="copy-prompt">Copy prompt</button>
+        </div>
+      </div>
+
+      <div class="hint" style="text-align:left">Both the key and context file are stored locally in <b>settings.json</b> (gitignored, never uploaded). The context file is optional — without it you still get plain summaries.</div>
     </div>
 
     <div class="status" id="proc"></div>
 
     <div class="scroll">
+      <button id="saved-pin" class="saved-bar" style="display:none">⭐ Saved for later <span id="saved-n">0</span> →</button>
       <div id="ch-list" class="ch-grid"></div>
+
       <div id="ch-detail" style="display:none">
         <div class="detail-head">
           <button class="btn ghost" id="back">← Channels</button>
@@ -220,6 +271,28 @@ https://www.youtube.com/watch?v=…"></textarea>
         </div>
         <div id="vid-grid" class="vid-grid" style="margin-top:14px"></div>
       </div>
+
+      <div id="vid-detail" style="display:none">
+        <div class="detail-head">
+          <button class="btn ghost" id="vback">← Back</button>
+          <span class="name" id="vd-title"></span>
+          <button class="btn ghost" id="vd-star">☆ Save</button>
+          <button class="btn" id="vd-watch">Open video ↗</button>
+        </div>
+        <div class="vd-body">
+          <div class="vd-summary" id="vd-summary"></div>
+          <button class="linky" id="vd-tr-toggle" style="display:none">Show full transcript</button>
+          <div class="vd-transcript" id="vd-transcript" style="display:none"></div>
+        </div>
+      </div>
+
+      <div id="saved-view" style="display:none">
+        <div class="detail-head">
+          <button class="btn ghost" id="saved-back">← Channels</button>
+          <span class="name">Saved for later</span>
+        </div>
+        <div id="saved-list" class="saved-list" style="margin-top:14px"></div>
+      </div>
     </div>
   </div>
 
@@ -227,6 +300,8 @@ https://www.youtube.com/watch?v=…"></textarea>
   let pickedFile = null;   // filesystem path chosen/dropped
   let lastFile = null;     // saved transcript path
   let openCid = null;      // channel whose video grid is showing
+  let savedCount = 0;      // number of starred (watch-later) videos
+  let detailReturn = 'grid';  // where the detail view's Back returns to
   const $ = id => document.getElementById(id);
   const api = () => window.pywebview.api;
   const esc = s => (s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -293,9 +368,31 @@ https://www.youtube.com/watch?v=…"></textarea>
   }
 
   async function loadChannels() {
+    showList();                 // always return to the channel-list view
     renderChannels(await api().get_channels());
     loadSettings();
+    refreshCollections();
+    refreshSavedPin();
     api().refresh_channels();   // check for new uploads in the background
+  }
+  async function refreshCollections() {
+    const names = await api().get_collections();
+    $('collections').innerHTML = names.map(n => `<option value="${esc(n)}">`).join('');
+  }
+  async function refreshSavedPin() {
+    savedCount = (await api().get_starred()).length;
+    $('saved-n').textContent = savedCount;
+    if ($('ch-list').style.display !== 'none')
+      $('saved-pin').style.display = savedCount ? 'block' : 'none';
+  }
+  // reset to the channel-list view
+  function showList() {
+    openCid = null;
+    $('ch-detail').style.display = 'none';
+    $('vid-detail').style.display = 'none';
+    $('saved-view').style.display = 'none';
+    $('ch-list').style.display = 'grid';
+    $('saved-pin').style.display = savedCount ? 'block' : 'none';
   }
 
   // ----- settings panel -----
@@ -305,7 +402,11 @@ https://www.youtube.com/watch?v=…"></textarea>
     pill.className = 'pill ' + (s.has_key ? 'on' : 'off');
     $('apikey').value = '';                       // never echo the key back
     $('apikey').placeholder = s.has_key ? '•••••••••• (saved) — paste to replace' : 'sk-ant-…  (paste to turn on AI summaries)';
-    $('ctxpath').value = s.context_md || 'context.md';
+    $('ctxpath').value = s.context_md && s.context_md !== 'context.md' ? s.context_md : '';
+    $('ctxpath').placeholder = s.context_exists ? (s.context_md || 'context.md') : 'No file chosen';
+    const cs = $('ctx-state');
+    cs.textContent = s.context_exists ? 'loaded' : 'none';
+    cs.className = 'pill ' + (s.context_exists ? 'on' : 'off');
   }
   async function loadSettings() { showSettings(await api().get_settings()); }
 
@@ -318,9 +419,17 @@ https://www.youtube.com/watch?v=…"></textarea>
     showSettings(await api().save_api_key($('apikey').value));
     setProc('');
   });
-  $('save-ctx').addEventListener('click', async () => {
-    showSettings(await api().save_context_path($('ctxpath').value));
-    setProc('Context file saved.');
+  $('pick-ctx').addEventListener('click', async () => {
+    showSettings(await api().pick_context());
+    setProc('Context file set.');
+  });
+  $('ctx-help-toggle').addEventListener('click', () => {
+    const h = $('ctx-help');
+    h.style.display = h.style.display === 'none' ? 'flex' : 'none';
+  });
+  $('copy-prompt').addEventListener('click', () => {
+    navigator.clipboard.writeText($('ctx-prompt').value);
+    setProc('Prompt copied — paste it into Claude, then save the reply as context.md.');
   });
 
   // ----- add clips (paste individual video/reel URLs) -----
@@ -331,10 +440,11 @@ https://www.youtube.com/watch?v=…"></textarea>
   $('save-clips').addEventListener('click', () => {
     const urls = $('clipurls').value.split('\n').map(s => s.trim()).filter(Boolean);
     if (!urls.length) return;
+    const collection = $('clip-collection').value.trim() || 'Saved clips';
     $('clipurls').value = '';
     $('clips-panel').style.display = 'none';
     setProc('Reading clip details…');
-    api().add_videos(urls);
+    api().add_videos(urls, collection);
   });
 
   function renderChannels(list) {
@@ -362,6 +472,9 @@ https://www.youtube.com/watch?v=…"></textarea>
 
   async function openChannel(cid, name, plat) {
     openCid = cid;
+    $('saved-pin').style.display = 'none';
+    $('saved-view').style.display = 'none';
+    $('vid-detail').style.display = 'none';
     $('ch-list').style.display = 'none';
     $('ch-detail').style.display = 'block';
     $('detail-name').textContent = name;
@@ -370,23 +483,104 @@ https://www.youtube.com/watch?v=…"></textarea>
   }
 
   function vcardHTML(v) {
-    const pop = v.summary ? esc(v.summary)
-      : v.done ? 'Transcribed. Add an ANTHROPIC_API_KEY (.env) for AI summaries.'
-      : 'Transcribing…';
     const thumb = v.thumb
       ? `<img class="thumb" src="${v.thumb}" loading="lazy">`
       : `<div class="thumb noimg">🎬</div>`;
+    const rel = v.summary && /Relevant because/i.test(v.summary)
+      ? '<div class="rel" title="Relevant to your work">✨</div>' : '';
     return `
       <div class="vcard ${v.done ? '' : 'pending'}" data-id="${v.id}">
         ${thumb}
         ${v.done ? '' : '<div class="badge">transcribing…</div>'}
-        <div class="info">ℹ</div><div class="pop">${pop}</div>
+        ${rel}
+        <button class="vstar ${v.starred ? 'on' : ''}" data-star="${v.id}" title="Save for later">${v.starred ? '★' : '☆'}</button>
         <div class="vtitle">${esc(v.title)}</div>
       </div>`;
   }
 
   function renderVideos(vids) {
     $('vid-grid').innerHTML = vids.map(vcardHTML).join('');
+  }
+
+  // click a card → full detail view. Summary is generated here on first open (on-demand).
+  function setStarBtn(d) {
+    const st = $('vd-star');
+    st.textContent = d.starred ? '★ Saved' : '☆ Save';
+    st.classList.toggle('on', !!d.starred);
+    st.onclick = async () => {
+      d.starred = await api().toggle_star(d.id);
+      st.textContent = d.starred ? '★ Saved' : '☆ Save';
+      st.classList.toggle('on', !!d.starred);
+      patchCard(d);
+      refreshSavedPin();
+    };
+  }
+  function showDetail(d) {
+    $('vd-title').textContent = d.title;
+    $('vd-summary').textContent = d.summary
+      || (d.done ? 'No summary yet — add your Anthropic key in ⚙ Settings, then reopen.'
+                 : 'Not transcribed yet.');
+    const tr = $('vd-transcript');
+    tr.textContent = d.transcript || '';
+    tr.style.display = 'none';
+    $('vd-tr-toggle').textContent = 'Show full transcript';
+    $('vd-tr-toggle').style.display = d.transcript ? '' : 'none';
+    $('vd-watch').onclick = () => api().open_url(d.url);
+    setStarBtn(d);
+    $('ch-detail').style.display = 'none';
+    $('saved-view').style.display = 'none';
+    $('vid-detail').style.display = 'block';
+    $('vid-detail').scrollTop = 0;
+  }
+  function patchCard(d) {
+    const card = $('vid-grid').querySelector(`.vcard[data-id="${d.id}"]`);
+    if (card) card.outerHTML = vcardHTML({ id: d.id, title: d.title, thumb: d.thumb,
+      summary: d.summary, done: !!d.done, starred: d.starred });
+  }
+  async function openVideo(vid, from) {
+    detailReturn = from || 'grid';
+    $('saved-pin').style.display = 'none';
+    let d = await api().video_detail(vid);
+    if (!d) return;
+    showDetail(d);
+    // generate the summary the first time this video is opened (transcribed, none yet, key set)
+    if (d.done && !d.summary && await api().has_ai()) {
+      $('vd-summary').textContent = 'Summarising… (a few seconds)';
+      const s = await api().summarize_now(vid);
+      d.summary = s.summary;
+      $('vd-summary').textContent = d.summary || 'Could not summarise — check your key in ⚙ Settings.';
+      patchCard(d);
+    }
+  }
+
+  // ----- saved-for-later checklist -----
+  function savedRowHTML(v) {
+    const thumb = v.thumb ? `<img class="sthumb" src="${v.thumb}">` : `<div class="sthumb"></div>`;
+    return `
+      <div class="srow ${v.watched ? 'watched' : ''}" data-id="${v.id}">
+        <input type="checkbox" class="schk" data-id="${v.id}" ${v.watched ? 'checked' : ''} title="Mark watched">
+        ${thumb}
+        <div class="sinfo" data-open="${v.id}">
+          <div class="stitle">${esc(v.title)}</div>
+          <div class="schan">${esc(v.channel)}</div>
+        </div>
+        <button class="btn ghost sopen" data-url="${v.url}" title="Open in browser">↗</button>
+        <button class="btn ghost sunstar" data-id="${v.id}" title="Remove from saved">✕</button>
+      </div>`;
+  }
+  async function openSaved() {
+    const items = await api().get_starred();
+    savedCount = items.length;
+    $('saved-n').textContent = savedCount;
+    $('saved-list').innerHTML = items.length
+      ? items.map(savedRowHTML).join('')
+      : '<div class="empty">Nothing saved yet. Tap the ☆ on any video to add it here.</div>';
+    openCid = null;
+    $('saved-pin').style.display = 'none';
+    $('ch-list').style.display = 'none';
+    $('ch-detail').style.display = 'none';
+    $('vid-detail').style.display = 'none';
+    $('saved-view').style.display = 'block';
   }
 
   window.onChannels = renderChannels;
@@ -407,12 +601,59 @@ https://www.youtube.com/watch?v=…"></textarea>
   }
   $('follow').addEventListener('click', follow);
   $('churl').addEventListener('keydown', e => { if (e.key === 'Enter') follow(); });
-  $('back').addEventListener('click', () => {
-    openCid = null;
-    $('ch-detail').style.display = 'none';
-    $('ch-list').style.display = 'grid';
-  });
+  $('back').addEventListener('click', showList);
   $('history').addEventListener('click', () => { if (openCid) api().more_history(openCid); });
+
+  // delegated so it survives grid re-renders / card patches
+  $('vid-grid').addEventListener('click', async e => {
+    const star = e.target.closest('.vstar');
+    if (star) {
+      const on = await api().toggle_star(star.dataset.star);
+      star.textContent = on ? '★' : '☆';
+      star.classList.toggle('on', !!on);
+      refreshSavedPin();
+      return;
+    }
+    const card = e.target.closest('.vcard');
+    if (card) openVideo(card.dataset.id, 'grid');
+  });
+  $('vback').addEventListener('click', () => {
+    $('vid-detail').style.display = 'none';
+    if (detailReturn === 'saved') openSaved();
+    else $('ch-detail').style.display = 'block';
+  });
+  $('vd-tr-toggle').addEventListener('click', () => {
+    const t = $('vd-transcript');
+    const show = t.style.display === 'none';
+    t.style.display = show ? 'block' : 'none';
+    $('vd-tr-toggle').textContent = show ? 'Hide transcript' : 'Show full transcript';
+  });
+
+  // saved-for-later checklist
+  $('saved-pin').addEventListener('click', openSaved);
+  $('saved-back').addEventListener('click', showList);
+  $('saved-list').addEventListener('click', async e => {
+    const chk = e.target.closest('.schk');
+    if (chk) {
+      await api().set_watched(chk.dataset.id, chk.checked);
+      chk.closest('.srow').classList.toggle('watched', chk.checked);
+      return;
+    }
+    const open = e.target.closest('.sopen');
+    if (open) { api().open_url(open.dataset.url); return; }
+    const uns = e.target.closest('.sunstar');
+    if (uns) {
+      await api().toggle_star(uns.dataset.id);
+      uns.closest('.srow').remove();
+      savedCount = Math.max(0, savedCount - 1);
+      $('saved-n').textContent = savedCount;
+      if (!savedCount) $('saved-list').innerHTML =
+        '<div class="empty">Nothing saved yet. Tap the ☆ on any video to add it here.</div>';
+      return;
+    }
+    const info = e.target.closest('.sinfo');
+    if (info) openVideo(info.dataset.open, 'saved');
+  });
 
   // On launch, preload a file dropped on the app icon.
   window.addEventListener('pywebviewready', async () => {

@@ -1,9 +1,13 @@
 #!/bin/sh
 # install.sh — one-time setup for Transcribe Drop.
-# Installs the CLI tools + Python package it needs, then builds
-# "Transcribe Drop.app" (an AppleScript droplet pointing at this folder).
+# Installs the CLI tools + Python packages it needs, then builds a self-contained
+# "Transcribe Drop.app" you can drag to /Applications. (Tip: just double-click
+# Install.command instead of running this in a terminal.)
 set -e
 cd "$(dirname "$0")"
+# Use the SAME python the launched app will use (launch.sh puts Homebrew first),
+# so the packages we install below are the ones the app finds — no slow first-run install.
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 PY="$(command -v python3)"
 
 echo "==> Checking command-line tools (yt-dlp, ffmpeg, whisper-cpp)…"
@@ -16,35 +20,44 @@ if [ -n "$MISSING" ]; then
     echo "    Installing:$MISSING"
     brew install yt-dlp ffmpeg whisper-cpp
   else
-    echo "    Missing:$MISSING — install Homebrew (https://brew.sh) then run:"
-    echo "      brew install yt-dlp ffmpeg whisper-cpp"
+    echo "    Missing:$MISSING — install Homebrew (https://brew.sh) then re-run."
     exit 1
   fi
 fi
 
-echo "==> Installing the Python packages (pywebview, anthropic)…"
-# anthropic is only used for the optional AI summaries (Channels tab). The app
-# runs fine without an API key; summaries are simply skipped until one is set.
-"$PY" -m pip install --quiet pywebview anthropic
+echo "==> Setting up the app's Python environment (pywebview, anthropic)…"
+# A dedicated venv keeps us off the externally-managed Homebrew Python (PEP 668)
+# and guarantees the app finds these packages. Lives with the user data.
+SUPPORT="$HOME/Library/Application Support/Transcribe Drop"
+mkdir -p "$SUPPORT"
+[ -x "$SUPPORT/venv/bin/python" ] || "$PY" -m venv "$SUPPORT/venv"
+"$SUPPORT/venv/bin/pip" install --quiet --upgrade pip
+# anthropic is only used for the optional AI summaries; the app runs without a key.
+"$SUPPORT/venv/bin/pip" install --quiet pywebview anthropic
 
-echo "==> Building 'Transcribe Drop.app'…"
-cat > /tmp/transcribe-drop-droplet.applescript <<EOF
-property py : "$PY"
-property gui : "$(pwd)/transcribe-app.py"
+echo "==> Building a self-contained 'Transcribe Drop.app'…"
+APP="Transcribe Drop.app"
+# The applet finds its own launcher via 'path to resource', so the app has no
+# hard-coded paths and can be moved anywhere (including /Applications).
+cat > /tmp/td-droplet.applescript <<'EOF'
 on run
-  do shell script py & " " & quoted form of gui & " > /dev/null 2>&1 &"
+  do shell script "/bin/bash " & quoted form of (POSIX path of (path to resource "launch.sh")) & " > /dev/null 2>&1 &"
 end run
 on open theFiles
-  set videoPath to POSIX path of item 1 of theFiles
-  do shell script py & " " & quoted form of gui & " " & quoted form of videoPath & " > /dev/null 2>&1 &"
+  set f to POSIX path of item 1 of theFiles
+  do shell script "/bin/bash " & quoted form of (POSIX path of (path to resource "launch.sh")) & " " & quoted form of f & " > /dev/null 2>&1 &"
 end open
 EOF
-rm -rf "Transcribe Drop.app"
-osacompile -o "Transcribe Drop.app" /tmp/transcribe-drop-droplet.applescript
-[ -f icon/applet.icns ] && cp icon/applet.icns "Transcribe Drop.app/Contents/Resources/applet.icns" || true
-touch "Transcribe Drop.app"
+rm -rf "$APP"
+osacompile -o "$APP" /tmp/td-droplet.applescript
+RES="$APP/Contents/Resources"
+# Bundle the code + launcher + icon inside the app.
+cp transcribe-app.py channels.py ui.html launch.sh "$RES/"
+chmod +x "$RES/launch.sh"
+[ -f icon/AppIcon.icns ] && cp icon/AppIcon.icns "$RES/applet.icns"
+touch "$APP"
 
 echo ""
-echo "Done. Double-click 'Transcribe Drop.app', or drag it to your Dock."
-echo "Drop a video on its icon to transcribe that file; or open it and paste a URL."
-echo "Transcripts are saved to the app's 'output' folder."
+echo "Done. Drag 'Transcribe Drop.app' into your Applications folder (or double-click it right here)."
+echo "First time you open it: right-click → Open, then confirm (it's an unsigned local app)."
+echo "The transcription model (~148 MB) downloads automatically the first time it's needed."

@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -17,10 +18,14 @@ import urllib.request
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent
-DB = APP_DIR / 'data.db'
-MODEL = APP_DIR / 'models' / 'ggml-base.bin'  # whisper fallback model (shared with Phase 1)
+# User data lives outside the app bundle so the .app can sit in /Applications
+# (read-only) and still read/write. Older versions kept it next to the code;
+# _migrate_data() moves that over on first run.
+DATA_DIR = Path.home() / 'Library' / 'Application Support' / 'Transcribe Drop'
+DB = DATA_DIR / 'data.db'
+MODEL = DATA_DIR / 'models' / 'ggml-base.bin'  # whisper fallback model (shared with Phase 1)
 MODEL_URL = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin'
-SETTINGS = APP_DIR / 'settings.json'
+SETTINGS = DATA_DIR / 'settings.json'
 MANUAL_CID = 'manual'   # the "Saved clips" pseudo-channel: pasted URLs, no auto-listing
 LATEST = 20          # transcribe this many newest videos by default
 HISTORY_BATCH = 20   # "get more history" pulls this many older ones
@@ -38,19 +43,39 @@ def _conn():
     return c
 
 
+def _migrate_data():
+    """One-time move of user data from the old in-folder location to Application Support."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if DB.exists() or not (APP_DIR / 'data.db').exists():
+        return
+    for name in ('data.db', 'data.db-wal', 'data.db-shm', 'settings.json', '.env', 'context.md'):
+        p = APP_DIR / name
+        if p.exists():
+            shutil.move(str(p), str(DATA_DIR / name))
+    for d in ('models', 'output'):
+        src = APP_DIR / d
+        if src.exists() and not (DATA_DIR / d).exists():
+            shutil.move(str(src), str(DATA_DIR / d))
+
+
 def init_db():
+    _migrate_data()
     with _conn() as c:
         c.executescript('''
         CREATE TABLE IF NOT EXISTS channels(
             id TEXT PRIMARY KEY, name TEXT, url TEXT, platform TEXT DEFAULT 'youtube');
         CREATE TABLE IF NOT EXISTS videos(
             id TEXT PRIMARY KEY, channel_id TEXT, title TEXT, duration INTEGER,
-            thumb TEXT, position REAL, url TEXT, transcript TEXT, source TEXT, summary TEXT);
+            thumb TEXT, position REAL, url TEXT, transcript TEXT, source TEXT, summary TEXT,
+            starred INTEGER DEFAULT 0, watched INTEGER DEFAULT 0);
         ''')
-        # Migrate older DBs (pre "Saved clips") that lack the per-video url column.
+        # Migrate older DBs that lack newer columns.
         cols = [r[1] for r in c.execute('PRAGMA table_info(videos)')]
-        if 'url' not in cols:
-            c.execute('ALTER TABLE videos ADD COLUMN url TEXT')
+        for col, ddl in (('url', 'url TEXT'),
+                         ('starred', 'starred INTEGER DEFAULT 0'),
+                         ('watched', 'watched INTEGER DEFAULT 0')):
+            if col not in cols:
+                c.execute(f'ALTER TABLE videos ADD COLUMN {ddl}')
 
 
 def _ensure_model():
@@ -160,13 +185,30 @@ def _probe(url):
             'thumb': d.get('thumbnail') or ''}
 
 
-def add_videos(urls):
-    """'Saved clips': add pasted video/reel URLs (any yt-dlp source, incl. Facebook).
+def _collection_id(name):
+    """Stable id for a named collection. Default 'Saved clips' keeps the legacy 'manual' id."""
+    name = (name or '').strip()
+    if not name or name.lower() == 'saved clips':
+        return MANUAL_CID
+    return 'col_' + hashlib.sha1(name.lower().encode()).hexdigest()[:12]
+
+
+def list_collections():
+    """Names of existing clip collections (for the 'add to collection' dropdown)."""
+    with _conn() as c:
+        return [r['name'] for r in
+                c.execute("SELECT name FROM channels WHERE platform='manual' ORDER BY name")]
+
+
+def add_videos(urls, collection='Saved clips'):
+    """Add pasted video/reel URLs (any yt-dlp source, incl. Facebook) to a named collection.
     Each becomes a card that gets transcribed + summarised like a channel video."""
+    name = (collection or 'Saved clips').strip() or 'Saved clips'
+    cid = _collection_id(name)
     with _conn() as c:
         c.execute("INSERT OR IGNORE INTO channels(id, name, url, platform) VALUES (?,?,?,?)",
-                  (MANUAL_CID, 'Saved clips', '', 'manual'))
-        top = c.execute('SELECT MIN(position) m FROM videos WHERE channel_id=?', (MANUAL_CID,)).fetchone()['m']
+                  (cid, name, '', 'manual'))
+        top = c.execute('SELECT MIN(position) m FROM videos WHERE channel_id=?', (cid,)).fetchone()['m']
     top = top if top is not None else 0.0
     added = 0
     for url in urls:
@@ -182,8 +224,8 @@ def add_videos(urls):
         with _conn() as c:
             c.execute('''INSERT OR IGNORE INTO videos(id, channel_id, title, duration, thumb, position, url)
                          VALUES (?,?,?,?,?,?,?)''',
-                      (vid, MANUAL_CID, meta['title'], meta['duration'], meta['thumb'], top - added, url))
-    return {'id': MANUAL_CID, 'name': 'Saved clips', 'added': added}
+                      (vid, cid, meta['title'], meta['duration'], meta['thumb'], top - added, url))
+    return {'id': cid, 'name': name, 'added': added}
 
 
 def _get_channel(cid):
@@ -205,7 +247,7 @@ def list_channels():
 
 def channel_videos(cid):
     with _conn() as c:
-        rows = c.execute('''SELECT id, title, duration, thumb, summary,
+        rows = c.execute('''SELECT id, title, duration, thumb, summary, starred,
                                    transcript IS NOT NULL AS done
                             FROM videos WHERE channel_id=? ORDER BY position''', (cid,))
         return [dict(r) for r in rows]
@@ -213,10 +255,64 @@ def channel_videos(cid):
 
 def get_video(vid):
     with _conn() as c:
-        r = c.execute('''SELECT id, title, duration, thumb, summary,
+        r = c.execute('''SELECT id, title, duration, thumb, summary, starred,
                                 transcript IS NOT NULL AS done
                          FROM videos WHERE id=?''', (vid,)).fetchone()
         return dict(r) if r else None
+
+
+def video_detail(vid):
+    """Everything the click-to-open detail view needs (incl. full transcript + a watch URL)."""
+    with _conn() as c:
+        r = c.execute('''SELECT id, title, thumb, summary, transcript, url, starred, watched
+                         FROM videos WHERE id=?''', (vid,)).fetchone()
+    if not r:
+        return None
+    d = dict(r)
+    d['url'] = d['url'] or f'https://www.youtube.com/watch?v={vid}'
+    d['done'] = d['transcript'] is not None
+    return d
+
+
+# ---- starring / watch-later checklist ------------------------------------
+
+def toggle_star(vid):
+    """Flip a video's saved-for-later star. Returns the new state (0/1) or None."""
+    with _conn() as c:
+        cur = c.execute('SELECT starred FROM videos WHERE id=?', (vid,)).fetchone()
+        if not cur:
+            return None
+        new = 0 if cur['starred'] else 1
+        c.execute('UPDATE videos SET starred=? WHERE id=?', (new, vid))
+    return new
+
+
+def set_watched(vid, val):
+    """Check/uncheck a starred video as watched (the checklist tick)."""
+    with _conn() as c:
+        c.execute('UPDATE videos SET watched=? WHERE id=?', (1 if val else 0, vid))
+    return True
+
+
+def starred_count():
+    with _conn() as c:
+        return c.execute('SELECT COUNT(*) n FROM videos WHERE starred=1').fetchone()['n']
+
+
+def starred_videos():
+    """The watch-later checklist: all starred videos, unwatched first, with their channel."""
+    with _conn() as c:
+        rows = c.execute('''SELECT v.id, v.title, v.thumb, v.url, v.watched,
+                                   v.transcript IS NOT NULL AS done, c.name AS channel
+                            FROM videos v JOIN channels c ON v.channel_id = c.id
+                            WHERE v.starred = 1
+                            ORDER BY v.watched, c.name, v.position''')
+        out = []
+        for r in rows:
+            d = dict(r)
+            d['url'] = d['url'] or f"https://www.youtube.com/watch?v={r['id']}"
+            out.append(d)
+        return out
 
 
 def pending_videos():
@@ -329,7 +425,7 @@ def set_context_path(path):
 
 def _context_path():
     p = _load_settings().get('context_md') or 'context.md'
-    return Path(p) if os.path.isabs(p) else APP_DIR / p
+    return Path(p) if os.path.isabs(p) else DATA_DIR / p
 
 
 def settings_view():
@@ -354,7 +450,7 @@ def _api_key():
     key = _load_settings().get('api_key')
     if key:
         return key
-    env = APP_DIR / '.env'
+    env = DATA_DIR / '.env'
     if env.exists():
         for line in env.read_text().splitlines():
             line = line.strip()
