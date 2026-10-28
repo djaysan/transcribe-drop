@@ -26,6 +26,8 @@ First launch installs the tools it needs and downloads the ~148 MB model automat
 
 > It's an unsigned app (no paid Apple Developer account), so that one-time right-click → Open is macOS's approval step. Prefer to build from source? Grab **`Transcribe-Drop-vX.Y.Z.zip`** and run `./install.sh`.
 
+> Building from source and using the Meetings tab? Run `./make-signing-cert.sh` once before `./install.sh`. It creates a local signing certificate, so macOS keeps the Microphone and Screen Recording permissions every time you rebuild.
+
 ## AI summaries (optional)
 
 Open **⚙ Settings**, paste an [Anthropic API key](https://console.anthropic.com), and — optionally — pick a context file describing what you do (there's a built-in prompt to generate one with Claude). Without a key the app still lists and transcribes everything; it just skips the summaries. Everything except the summaries is free and local.

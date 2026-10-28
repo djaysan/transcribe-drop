@@ -5,6 +5,7 @@ Pipeline: yt-dlp (URL → audio) or ffmpeg (file → audio) → whisper.cpp → 
 GUI is pywebview (native window + ui.html). A video dropped on the .app icon is
 passed as argv[1] and preloaded.
 """
+import fcntl
 import json
 import os
 import re
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.request
 from pathlib import Path
 
@@ -32,8 +34,11 @@ MODEL_URL = channels.MODEL_URL
 OUTPUT_DIR = channels.DATA_DIR / 'output'
 # pywebview's filter description allows only word chars + spaces (no '/'), so keep it plain.
 FILE_TYPES = ('Media files (*.mp4;*.mov;*.mkv;*.webm;*.m4a;*.mp3;*.wav;*.aac;*.flac)',)
+# Posted by a second copy of the app, so the running one shows its window instead.
+SHOW_NOTE = 'com.lverbeeck.transcribe-drop.show'
 
 window = None
+_lock = None   # held open while the app runs: see _already_running()
 
 
 def have(cmd: str) -> bool:
@@ -364,6 +369,37 @@ class Api:
             pass
         return meetings.detail(mid)
 
+    # --- auto-record: start when a call app holds the mic, stop when it lets go ---
+    def set_auto_record(self, on):
+        meetings.save_auto(on)
+        self._meet_state()   # keeps the Meetings tab and the menu bar checkmark in sync
+        return meetings.state()
+
+    def _watch_mic(self):
+        """Runs for the app's lifetime on its own thread. The watcher always runs; the
+        setting is checked on every reading, so switching it on mid-call works."""
+        try:
+            p = subprocess.Popen([str(meetings.RECORDER), 'watch'], stdout=subprocess.PIPE,
+                                 stderr=subprocess.DEVNULL, text=True)
+        except OSError:
+            return   # recorder not built: auto-record never fires, manual recording says why
+        auto = meetings.AutoRecord()
+        for line in p.stdout:   # one reading a second, e.g. ["Brave Browser"]
+            try:
+                apps = json.loads(line)
+            except ValueError:   # not a watcher: an older recorder build records into "./watch" instead
+                p.terminate()
+                return
+            s = meetings.state()
+            act = auto.tick(time.time(), apps, s['recording'], s['auto'])
+            if act == 'start':
+                self._start_meeting()   # on this thread, so the next reading sees it recording
+                if meetings.state()['recording']:
+                    _notify(f"Recording, mic in use by {', '.join(apps)}")
+            elif act == 'stop':
+                _notify('Call ended, transcribing…')
+                self.stop_meeting(s['lang'])   # the language last picked in the Meetings tab
+
 
 def _set_dock_icon():
     # The Dock shows the Python interpreter's rocket by default — point it at our
@@ -378,6 +414,36 @@ def _set_dock_icon():
                 return
     except Exception:  # noqa: BLE001 — cosmetic only
         pass
+
+
+def _already_running():
+    """True if another copy of the app is running; that copy is asked to show its window.
+    Opening the app while it sits in the menu bar would otherwise start a second copy, with
+    a second mic watcher recording every call twice. The lock goes when the process ends.
+    ponytail: a file dropped on the icon while the app runs only brings the window up."""
+    global _lock
+    _lock = open(channels.DATA_DIR / 'app.lock', 'w')
+    try:
+        fcntl.flock(_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return False
+    except OSError:
+        AppKit.NSDistributedNotificationCenter.defaultCenter() \
+            .postNotificationName_object_userInfo_deliverImmediately_(SHOW_NOTE, None, None, True)
+        return True
+
+
+def _opened_at_login():
+    """True when the app opens within 2 minutes of the Dock starting, i.e. as a Login Item
+    (macOS doesn't tell an app it was opened that way). It then starts as the menu bar icon only.
+    ponytail: a Dock restart (killall Dock) in the last 2 minutes also counts; the window is
+    one click away in the menu bar icon either way."""
+    out = subprocess.run(['/bin/ps', '-x', '-o', 'etime=,comm='], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        etime, _, comm = line.strip().partition(' ')
+        if comm.endswith('/Dock'):
+            parts = etime.split(':')   # mm:ss, then hh:mm:ss, then dd-hh:mm:ss
+            return len(parts) == 2 and int(parts[0]) < 2
+    return False
 
 
 def _notify(msg):
@@ -414,18 +480,23 @@ class MenuBar(AppKit.NSObject):
         self.item = AppKit.NSStatusBar.systemStatusBar().statusItemWithLength_(AppKit.NSVariableStatusItemLength)
         menu = AppKit.NSMenu.alloc().init()
         self.rec = menu.addItemWithTitle_action_keyEquivalent_('Start recording', 'toggle:', '')
+        self.auto = menu.addItemWithTitle_action_keyEquivalent_('Auto-record calls', 'auto:', '')
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
         menu.addItemWithTitle_action_keyEquivalent_('Open Transcribe Drop', 'open:', '')
         menu.addItemWithTitle_action_keyEquivalent_('Quit Transcribe Drop', 'quit:', '')
         for it in menu.itemArray():
             it.setTarget_(self)
         self.item.setMenu_(menu)
+        # A second copy of the app asks for the window (see _already_running).
+        AppKit.NSDistributedNotificationCenter.defaultCenter().addObserver_selector_name_object_(
+            self, 'open:', SHOW_NOTE, None)
         self.refresh()
         return self
 
     @objc.python_method
     def refresh(self):
-        on = meetings.state()['recording']
+        s = meetings.state()
+        on = s['recording']
         img = AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_(
             'record.circle.fill' if on else 'waveform', 'Transcribe Drop')
         if on:
@@ -436,6 +507,7 @@ class MenuBar(AppKit.NSObject):
         img.setTemplate_(not on)   # template = macOS draws it white or black to match the menu bar
         self.item.button().setImage_(img)
         self.rec.setTitle_('Stop & transcribe' if on else 'Start recording')
+        self.auto.setState_(AppKit.NSControlStateValueOn if s['auto'] else AppKit.NSControlStateValueOff)
 
     def toggle_(self, sender):
         s = meetings.state()
@@ -443,6 +515,11 @@ class MenuBar(AppKit.NSObject):
             self.api.stop_meeting(s['lang'])   # the language last picked in the Meetings tab
         else:
             self.api.start_meeting()
+
+    def auto_(self, sender):
+        # Off the main thread: pushing the new state to the window from here would deadlock.
+        threading.Thread(target=self.api.set_auto_record, args=(not meetings.state()['auto'],),
+                         daemon=True).start()
 
     def open_(self, sender):
         _show_window()
@@ -454,11 +531,14 @@ class MenuBar(AppKit.NSObject):
 def main():
     global window
     channels.init_db()
+    if _already_running():
+        return
     preload = sys.argv[1] if len(sys.argv) > 1 else None
+    hidden = not preload and _opened_at_login()
     api = Api(preload)
     window = webview.create_window(
         'Transcribe Drop', str(APP_DIR / 'ui.html'),
-        js_api=api, width=860, height=720, min_size=(640, 600),
+        js_api=api, width=860, height=720, min_size=(640, 600), hidden=hidden,
     )
     window.events.closing += _on_closing
     _set_dock_icon()
@@ -469,6 +549,9 @@ def main():
     def ready():
         _set_dock_icon()                 # set again once the GUI loop is up (more reliable)
         AppHelper.callAfter(add_menubar)  # AppKit objects must be created on the main thread
+        if hidden:   # menu bar icon only, like after closing the window
+            AppHelper.callAfter(AppKit.NSApp.setActivationPolicy_, AppKit.NSApplicationActivationPolicyAccessory)
+        threading.Thread(target=api._watch_mic, daemon=True).start()
 
     webview.start(ready)
 

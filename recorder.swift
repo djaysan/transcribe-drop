@@ -6,8 +6,13 @@
 // Both are 16 kHz mono AAC. Prints "recording" once capture is running, then records
 // until SIGINT/SIGTERM or until the app that started it exits.
 //
+// `recorder watch` records nothing: once a second it prints which apps are using the mic,
+// as a JSON list (e.g. ["Brave Browser"]), for auto-record. See watch() below.
+//
 // Build: swiftc -O recorder.swift -o recorder   (macOS 15+, needed for microphone capture)
+import AppKit
 import AVFoundation
+import CoreAudio
 import Foundation
 import ScreenCaptureKit
 
@@ -137,6 +142,61 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
     exit(code)
   }
 }
+
+// ---- watch mode -----------------------------------------------------------
+
+// The app a process works for: a browser tab's helper or a WebKit process counts as the
+// browser/app that owns it. Public in libsystem, just not in the SDK headers.
+@_silgen_name("responsibility_get_pid_responsible_for_pid")
+func responsiblePid(_ pid: pid_t) -> pid_t
+
+func audioUInt32(_ obj: AudioObjectID, _ sel: AudioObjectPropertySelector) -> UInt32 {
+  var addr = AudioObjectPropertyAddress(mSelector: sel, mScope: kAudioObjectPropertyScopeGlobal,
+                                        mElement: kAudioObjectPropertyElementMain)
+  var value: UInt32 = 0
+  var size = UInt32(MemoryLayout<UInt32>.size)
+  AudioObjectGetPropertyData(obj, &addr, 0, nil, &size, &value)
+  return value
+}
+
+// Names of the apps whose processes are capturing from a mic right now. Core Audio's process
+// list (macOS 14.2+) needs no permission. Only Dock apps count, which leaves out system
+// daemons (including replayd, where ScreenCaptureKit captures our own recorder's mic) and
+// menu-bar-only tools such as dictation apps; the app that started us never counts.
+func micApps() -> [String] {
+  let sys = AudioObjectID(kAudioObjectSystemObject)
+  var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList,
+                                        mScope: kAudioObjectPropertyScopeGlobal,
+                                        mElement: kAudioObjectPropertyElementMain)
+  var size: UInt32 = 0
+  guard AudioObjectGetPropertyDataSize(sys, &addr, 0, nil, &size) == noErr else { return [] }
+  var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+  guard AudioObjectGetPropertyData(sys, &addr, 0, nil, &size, &ids) == noErr else { return [] }
+
+  let ours: Set<pid_t> = [getppid(), responsiblePid(getpid())]   // Transcribe Drop + its recorder
+  var names = Set<String>()
+  for id in ids where audioUInt32(id, kAudioProcessPropertyIsRunningInput) != 0 {
+    let owner = responsiblePid(pid_t(bitPattern: audioUInt32(id, kAudioProcessPropertyPID)))
+    guard !ours.contains(owner), let app = NSRunningApplication(processIdentifier: owner),
+          app.activationPolicy == .regular, let name = app.localizedName else { continue }
+    names.insert(name)
+  }
+  return names.sorted()
+}
+
+// ponytail: polls once a second; Core Audio property listeners would avoid the poll, but a
+// few property reads a second cost nothing and can't miss a change.
+func watch() -> Never {
+  while getppid() != 1 {   // the app that started us is gone → stop
+    let json = try! JSONEncoder().encode(micApps())
+    print(String(decoding: json, as: UTF8.self))
+    fflush(stdout)
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 1))   // lets AppKit refresh its app list
+  }
+  exit(0)
+}
+
+if CommandLine.arguments.dropFirst().first == "watch" { watch() }
 
 let rec = Recorder()
 

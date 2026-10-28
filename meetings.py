@@ -5,6 +5,9 @@ No bot joins the call. The Swift helper (recorder.swift) writes me.m4a (your mic
 them.m4a (what the Mac plays: the other side) into one folder per meeting, on one shared
 timeline. On stop, whisper transcribes each track, the segments are merged by time into
 Me/Them lines (transcript.md), and Claude writes a summary + task checklist (notes.md).
+
+Auto-record: `recorder watch` reports once a second which apps hold the mic; AutoRecord
+turns that into start/stop (the app runs the watcher and acts on it).
 """
 import json
 import os
@@ -31,6 +34,8 @@ VAD = channels.DATA_DIR / 'models' / 'ggml-silero-v6.2.0.bin'
 VAD_URL = 'https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin'
 NOTES_MODEL = 'claude-opus-5-5'
 NO_SPEECH = '(No speech found in this recording.)'
+START_AFTER = 20   # seconds an app must hold the mic before auto-record starts
+STOP_AFTER = 15    # seconds of free mic before the call counts as over
 
 # ponytail: one recording at a time, held in memory; the recorder exits with the app.
 _rec = None   # (process, folder, start time) while recording
@@ -77,16 +82,61 @@ def stop():
 
 
 def state():
-    """Whether a recording is running (and for how long), plus the last meeting language."""
+    """Whether a recording is running (and for how long), the last meeting language, and
+    whether auto-record is on."""
+    s = channels._load_settings()
     return {'recording': bool(_rec),
             'elapsed': time.time() - _rec[2] if _rec else 0,
-            'lang': channels._load_settings().get('meeting_lang', '')}
+            'lang': s.get('meeting_lang', ''),
+            'auto': bool(s.get('auto_record'))}
 
 
 def save_lang(lang):
     s = channels._load_settings()
     s['meeting_lang'] = lang or ''
     channels._save_settings(s)
+
+
+def save_auto(on):
+    s = channels._load_settings()
+    s['auto_record'] = bool(on)
+    channels._save_settings(s)
+
+
+class AutoRecord:
+    """Turns the watcher's once-a-second readings (which apps hold the mic) into 'start' or
+    'stop'. A call = an app holding the mic START_AFTER seconds; it's over once the mic has
+    been free STOP_AFTER seconds. Starts at most once per call, so a recording stopped by
+    hand mid-call stays stopped, and only ever stops a recording it started itself."""
+
+    def __init__(self):
+        self.busy_since = None   # when an app took the mic (None while it's free)
+        self.free_since = None   # when the mic was released (None while it's held)
+        self.done = False        # this call already has (or had) a recording
+        self.ours = False        # the running recording was auto-started
+
+    def tick(self, now, apps, recording, enabled):
+        if not recording:
+            self.ours = False    # stopped (by hand or by us): nothing of ours to stop
+        if apps:
+            self.free_since = None
+            if self.busy_since is None:
+                self.busy_since = now
+            if recording:
+                self.done = True  # recorded by hand: don't start a second one this call
+            elif enabled and not self.done and now - self.busy_since >= START_AFTER:
+                self.done = self.ours = True
+                return 'start'
+            return None
+        self.busy_since = None
+        if self.free_since is None:
+            self.free_since = now
+        if now - self.free_since >= STOP_AFTER:   # the call is over
+            self.done = False
+            if self.ours:
+                self.ours = False
+                return 'stop'
+        return None
 
 
 # ---- transcription -------------------------------------------------------
@@ -268,4 +318,26 @@ if __name__ == '__main__':
     assert ph == [(0.05, 'Hi, by'), (3.4, 'Wednesday,'), (14.0, 'yes.')], ph
     out = merge([(65.0, 'Them', 'b'), (0.5, 'Me', 'a'), (1.2, 'Me', 'a2'), (70.0, 'Me', 'c')])
     assert out == '[00:00] Me: a a2\n\n[01:05] Them: b\n\n[01:10] Me: c', out
+
+    # Auto-record. run() feeds one reading per second: (seconds, apps holding the mic).
+    def run(auto, readings, recording=False, enabled=True):
+        acts = []
+        for t, apps in readings:
+            act = auto.tick(t, apps, recording, enabled)
+            recording = {'start': True, 'stop': False}.get(act, recording)
+            acts += [(t, act)] if act else []
+        return acts, recording
+    call = [(t, ['Zoom']) for t in range(0, 31)] + [(t, []) for t in range(31, 50)]
+    # 20 s of mic → start; 15 s after release → stop; the next call records again
+    assert run(AutoRecord(), call + [(t + 100, a) for t, a in call])[0] == \
+        [(20, 'start'), (46, 'stop'), (120, 'start'), (146, 'stop')]
+    # a short release before 20 s restarts the count; off → never starts
+    assert run(AutoRecord(), [(0, ['Zoom']), (10, []), (11, ['Zoom']), (30, ['Zoom']), (31, ['Zoom'])])[0] == [(31, 'start')]
+    assert run(AutoRecord(), call, enabled=False)[0] == []
+    # stopped by hand mid-call: no restart during that call
+    a = AutoRecord()
+    assert run(a, call[:21])[0] == [(20, 'start')]
+    assert run(a, call[21:], recording=False)[0] == []
+    # a recording started by hand is never auto-stopped
+    assert run(AutoRecord(), call, recording=True) == ([], True)
     print('ok')

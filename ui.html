@@ -317,8 +317,9 @@ Here's the raw material: [describe yourself in a few sentences — role, stack, 
       </div>
       <div class="opts">
         <label>Language <select id="mlang"></select></label>
+        <label class="chk"><input type="checkbox" id="mauto"> Auto-record calls</label>
       </div>
-      <div class="hint" style="text-align:left">Records your mic as <b>Me</b> and the call audio as <b>Them</b>, right on this Mac. No bot joins the call. Wear headphones so the two sides stay separate, and let people know you're recording.</div>
+      <div class="hint" style="text-align:left">Records your mic as <b>Me</b> and the call audio as <b>Them</b>, right on this Mac. No bot joins the call. Wear headphones so the two sides stay separate, and let people know you're recording. With auto-record on, recording starts once an app (Zoom, Teams, a browser call…) has used the mic for 20 seconds, and stops 15 seconds after the call ends.</div>
     </div>
 
     <div class="status" id="mproc"></div>
@@ -716,6 +717,7 @@ Here's the raw material: [describe yourself in a few sentences — role, stack, 
 
   function showMeetState(s) {
     recording = s.recording;
+    $('mauto').checked = s.auto;
     clearInterval(recTimer);
     $('rec').disabled = false;
     $('rec').textContent = recording ? '■ Stop & transcribe' : '● Record meeting';
@@ -788,6 +790,7 @@ Here's the raw material: [describe yourself in a few sentences — role, stack, 
     if (recording) { setMeetProc('Stopping…'); api().stop_meeting($('mlang').value); }
     else api().start_meeting();
   });
+  $('mauto').addEventListener('change', e => api().set_auto_record(e.target.checked));
   window.onMeetState = showMeetState;
   window.onMeetings = renderMeetings;
   window.onMeetProc = setMeetProc;

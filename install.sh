@@ -80,16 +80,22 @@ if [ -f icon/AppIcon.icns ]; then
   cp icon/AppIcon.icns "$RES/droplet.icns"
 fi
 touch "$APP" "$APP/Contents/Info.plist"
-# Ad-hoc code-sign (sign as the last step, after all files are in place). Without
-# any signature a downloaded copy reads as "damaged"; ad-hoc gives the normal
-# "unverified developer → Open Anyway" flow instead.
-codesign --force --deep --sign - "$APP" 2>/dev/null || true
-# A rebuild changes the ad-hoc signature, so macOS no longer matches an earlier
-# recording permission to it and keeps asking even though it shows "enabled".
-# Clearing it means the next Record asks once, cleanly.
-# ponytail: signing with a real Apple developer certificate would make permissions survive rebuilds.
-tccutil reset ScreenCapture "$BUNDLE_ID" >/dev/null 2>&1 || true
-tccutil reset Microphone "$BUNDLE_ID" >/dev/null 2>&1 || true
+# Code-sign as the last step, after all files are in place.
+SIGN_ID="Transcribe Drop Local Signing"   # made once by make-signing-cert.sh
+if security find-identity -v -p codesigning | grep -q "\"$SIGN_ID\""; then
+  # Same certificate every build → macOS keeps the recording permissions across rebuilds.
+  echo "==> Signing with '$SIGN_ID'…"
+  codesign --force --deep --sign "$SIGN_ID" "$APP"
+else
+  # Ad-hoc: without any signature a downloaded copy reads as "damaged"; ad-hoc gives the
+  # normal "unverified developer → Open Anyway" flow instead.
+  codesign --force --deep --sign - "$APP" 2>/dev/null || true
+  # But a rebuild changes the ad-hoc signature, so macOS no longer matches an earlier
+  # recording permission to it and keeps asking even though it shows "enabled".
+  # Clearing it means the next Record asks once, cleanly. (./make-signing-cert.sh avoids this.)
+  tccutil reset ScreenCapture "$BUNDLE_ID" >/dev/null 2>&1 || true
+  tccutil reset Microphone "$BUNDLE_ID" >/dev/null 2>&1 || true
+fi
 
 echo ""
 echo "Done. Drag 'Transcribe Drop.app' into your Applications folder (or double-click it right here)."
