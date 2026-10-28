@@ -18,6 +18,7 @@ from pathlib import Path
 import webview
 
 import channels  # Phase 2: channel intelligence (data layer)
+import meetings  # Meetings: record a call on this Mac → transcript → notes + tasks
 
 APP_DIR = Path(__file__).resolve().parent
 # User data (model, transcripts) lives in Application Support, not the app bundle —
@@ -45,6 +46,7 @@ class Api:
     def __init__(self, preload=None):
         self._preload = preload
         self._proc_lock = threading.Lock()  # serialises the channel-processing worker
+        self._meet_lock = threading.Lock()  # one meeting transcription at a time
 
     # Path of a file dropped onto the .app icon (or None), read once by the UI.
     def get_preload(self):
@@ -286,6 +288,69 @@ class Api:
                 self._emit('onVideoDone', {'cid': p['channel_id'], 'video': channels.get_video(p['id'])})
             self._emit('onChannels', channels.list_channels())
             self._emit('onProc', 'Up to date.' if total else '')
+
+    # --- Meetings: record a call on this Mac → local transcript → notes + tasks ---
+    # Starting/stopping and transcribing run on worker threads; results are pushed to
+    # the UI via onMeetState / onMeetings / onMeetProc.
+
+    def meeting_state(self):
+        return meetings.state()
+
+    def get_meetings(self):
+        return meetings.list_meetings()
+
+    def meeting_detail(self, mid):
+        return meetings.detail(mid)
+
+    def start_meeting(self):
+        threading.Thread(target=self._start_meeting, daemon=True).start()
+        return True
+
+    def _start_meeting(self):
+        try:
+            self._emit('onMeetProc', 'Starting…')
+            meetings.start()
+            self._emit('onMeetProc', '')
+        except Exception as e:  # noqa: BLE001 — e.g. recording permission denied → shown in the UI
+            self._emit('onMeetProc', f'Error: {e}')
+        self._emit('onMeetState', meetings.state())
+        self._emit('onMeetings', meetings.list_meetings())
+
+    def stop_meeting(self, lang=''):
+        threading.Thread(target=self._stop_meeting, args=(lang,), daemon=True).start()
+        return True
+
+    def _stop_meeting(self, lang):
+        meetings.save_lang(lang)
+        meetings.stop()
+        self._emit('onMeetState', meetings.state())
+        self._process_meetings(lang)
+
+    # Called when the Meetings tab opens: picks up meetings that never got transcribed
+    # (e.g. the app was quit right after a call).
+    def process_pending_meetings(self, lang=''):
+        threading.Thread(target=self._process_meetings, args=(lang,), daemon=True).start()
+        return True
+
+    def _process_meetings(self, lang):
+        with self._meet_lock:
+            for mid in meetings.pending():   # read inside the lock, so nothing is done twice
+                self._emit('onMeetings', meetings.list_meetings())
+                try:
+                    done = meetings.process(mid, lang, status=lambda m: self._emit('onMeetProc', m))
+                    self._emit('onMeetProc', 'Notes ready.' if done else 'Transcript ready.')
+                except Exception as e:  # noqa: BLE001 — keep the audio; it retries next time the tab opens
+                    self._emit('onMeetProc', f'Error: {e}')
+            self._emit('onMeetings', meetings.list_meetings())
+
+    # On-demand notes: written the first time a transcribed meeting is opened
+    # (e.g. the API key was added after the call).
+    def meeting_notes_now(self, mid):
+        try:
+            meetings.notes(mid)
+        except Exception:  # noqa: BLE001 — no key / API error → detail just shows no notes
+            pass
+        return meetings.detail(mid)
 
 
 def _set_dock_icon():

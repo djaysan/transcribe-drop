@@ -149,6 +149,14 @@
   #vd-watch { padding:8px 12px; font-size:12.5px; }
   #vd-star { padding:8px 12px; font-size:12.5px; }
   #vd-star.on { color:#fbbf24; }
+
+  /* --- Meetings --- */
+  .rec-row { display:flex; align-items:center; gap:14px; }
+  .rec-row .go { flex:none; }
+  .btn.stop { background:var(--err); }
+  .rec-time { font-size:13px; font-weight:600; color:var(--err); font-variant-numeric:tabular-nums; }
+  .mrow { cursor:pointer; }
+  .mrow:hover { border-color:var(--accent); }
 </style>
 </head>
 <body>
@@ -159,13 +167,14 @@
     </svg></div>
     <div>
       <h1>Transcribe Drop</h1>
-      <p>Transcribe a video, or follow a channel — all on your Mac.</p>
+      <p>Transcribe a video, follow a channel, or record a meeting — all on your Mac.</p>
     </div>
   </div>
 
   <div class="tabs">
     <button class="tab active" data-view="transcribe">Transcribe</button>
     <button class="tab" data-view="channels">Channels</button>
+    <button class="tab" data-view="meetings">Meetings</button>
   </div>
 
   <!-- ============ Transcribe (Phase 1) ============ -->
@@ -299,6 +308,40 @@ Here's the raw material: [describe yourself in a few sentences — role, stack, 
     </div>
   </div>
 
+  <!-- ============ Meetings ============ -->
+  <div id="view-meetings" class="view">
+    <div class="settings-panel">
+      <div class="rec-row">
+        <button class="btn go" id="rec">● Record meeting</button>
+        <span class="rec-time" id="rec-time"></span>
+      </div>
+      <div class="opts">
+        <label>Language <select id="mlang"></select></label>
+      </div>
+      <div class="hint" style="text-align:left">Records your mic as <b>Me</b> and the call audio as <b>Them</b>, right on this Mac. No bot joins the call. Wear headphones so the two sides stay separate, and let people know you're recording.</div>
+    </div>
+
+    <div class="status" id="mproc"></div>
+
+    <div class="scroll">
+      <div id="m-list" class="saved-list"></div>
+
+      <div id="m-detail" style="display:none">
+        <div class="detail-head">
+          <button class="btn ghost" id="mback">← Meetings</button>
+          <span class="name" id="md-title"></span>
+          <button class="btn ghost" id="md-copy">Copy notes</button>
+          <button class="btn ghost" id="md-reveal">Show in Finder</button>
+        </div>
+        <div class="vd-body">
+          <div class="vd-summary" id="md-notes"></div>
+          <button class="linky" id="md-tr-toggle" style="display:none">Show full transcript</button>
+          <div class="vd-transcript" id="md-transcript" style="display:none"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
 <script>
   let pickedFile = null;   // filesystem path chosen/dropped
   let lastFile = null;     // saved transcript path
@@ -316,6 +359,7 @@ Here's the raw material: [describe yourself in a few sentences — role, stack, 
     t.classList.add('active');
     $('view-' + t.dataset.view).classList.add('active');
     if (t.dataset.view === 'channels') loadChannels();
+    if (t.dataset.view === 'meetings') loadMeetings();
   }));
 
   // ===== Transcribe tab =====
@@ -656,6 +700,107 @@ Here's the raw material: [describe yourself in a few sentences — role, stack, 
     }
     const info = e.target.closest('.sinfo');
     if (info) openVideo(info.dataset.open, 'saved');
+  });
+
+  // ===== Meetings tab =====
+  let recording = false;   // a meeting is being recorded right now
+  let recTimer = null;     // ticks the elapsed-time counter while recording
+  $('mlang').innerHTML = $('lang').innerHTML;   // same language list as the Transcribe tab
+
+  // Progress messages end with "…" and get a spinner; errors show in red.
+  function setMeetProc(msg) {
+    msg = msg || '';
+    $('mproc').className = 'status' + (msg.startsWith('Error') ? ' err' : '');
+    $('mproc').innerHTML = (msg.endsWith('…') ? '<span class="spin"></span>' : '') + esc(msg);
+  }
+
+  function showMeetState(s) {
+    recording = s.recording;
+    clearInterval(recTimer);
+    $('rec').disabled = false;
+    $('rec').textContent = recording ? '■ Stop & transcribe' : '● Record meeting';
+    $('rec').classList.toggle('stop', recording);
+    $('rec-time').textContent = '';
+    if (recording) {
+      const t0 = Date.now() - s.elapsed * 1000;
+      const tick = () => {
+        const sec = Math.floor((Date.now() - t0) / 1000);
+        $('rec-time').textContent = `Recording ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+      };
+      tick();
+      recTimer = setInterval(tick, 1000);
+    }
+  }
+
+  async function loadMeetings() {
+    const s = await api().meeting_state();
+    if (!recording) $('mlang').value = s.lang;   // the language used last time
+    showMeetState(s);
+    renderMeetings(await api().get_meetings());
+    api().process_pending_meetings($('mlang').value);   // transcribe anything left over
+  }
+
+  function renderMeetings(list) {
+    const label = { recording: ' · recording…', pending: ' · waiting to transcribe', done: '' };
+    $('m-list').innerHTML = list.length ? list.map(m => `
+      <div class="srow mrow" data-id="${esc(m.id)}">
+        <div class="sinfo">
+          <div class="stitle">${esc(m.title)}</div>
+          <div class="schan">${esc(m.when)}${label[m.state]}</div>
+        </div>
+      </div>`).join('')
+      : '<div class="empty">No meetings yet. Hit Record when a call starts.</div>';
+  }
+
+  function showMeetList() {
+    $('m-detail').style.display = 'none';
+    $('m-list').style.display = '';
+  }
+
+  // Open a meeting. Notes are written here on first open if they're missing (on-demand).
+  async function openMeeting(mid) {
+    const d = await api().meeting_detail(mid);
+    $('md-title').textContent = d.title;
+    $('md-notes').textContent = d.notes || (d.transcript
+      ? 'No notes yet. Add your Anthropic key in Channels → ⚙ Settings, then reopen.'
+      : 'Not transcribed yet.');
+    $('md-transcript').textContent = d.transcript;
+    $('md-transcript').style.display = 'none';
+    $('md-tr-toggle').textContent = 'Show full transcript';
+    $('md-tr-toggle').style.display = d.transcript ? '' : 'none';
+    $('md-reveal').onclick = () => api().reveal(d.path);
+    $('md-copy').onclick = () => {
+      navigator.clipboard.writeText($('md-notes').textContent + '\n\n' + d.transcript);
+      setMeetProc('Notes and transcript copied.');
+    };
+    $('m-list').style.display = 'none';
+    $('m-detail').style.display = 'block';
+    if (d.transcript && !d.notes && await api().has_ai()) {
+      $('md-notes').textContent = 'Writing notes and tasks… (up to a minute)';
+      const n = await api().meeting_notes_now(mid);
+      if (n.notes) $('md-title').textContent = n.title;
+      $('md-notes').textContent = n.notes || 'Could not write notes. Check your key in Channels → ⚙ Settings.';
+    }
+  }
+
+  $('rec').addEventListener('click', () => {
+    $('rec').disabled = true;
+    if (recording) { setMeetProc('Stopping…'); api().stop_meeting($('mlang').value); }
+    else api().start_meeting();
+  });
+  window.onMeetState = showMeetState;
+  window.onMeetings = renderMeetings;
+  window.onMeetProc = setMeetProc;
+  $('m-list').addEventListener('click', e => {
+    const row = e.target.closest('.mrow');
+    if (row) openMeeting(row.dataset.id);
+  });
+  $('mback').addEventListener('click', showMeetList);
+  $('md-tr-toggle').addEventListener('click', () => {
+    const t = $('md-transcript');
+    const show = t.style.display === 'none';
+    t.style.display = show ? 'block' : 'none';
+    $('md-tr-toggle').textContent = show ? 'Hide transcript' : 'Show full transcript';
   });
 
   // On launch, preload a file dropped on the app icon.

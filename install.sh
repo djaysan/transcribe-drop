@@ -52,8 +52,27 @@ rm -rf "$APP"
 osacompile -o "$APP" /tmp/td-droplet.applescript
 RES="$APP/Contents/Resources"
 # Bundle the code + launcher + icon inside the app.
-cp transcribe-app.py channels.py ui.html launch.sh "$RES/"
+cp transcribe-app.py channels.py meetings.py ui.html launch.sh "$RES/"
 chmod +x "$RES/launch.sh"
+
+# Meetings tab: compile the Swift recorder (needs Xcode's command-line tools).
+if command -v swiftc >/dev/null 2>&1; then
+  echo "==> Building the meeting recorder…"
+  swiftc -O recorder.swift -o "$RES/recorder"
+else
+  echo "    Skipping the meeting recorder: run 'xcode-select --install', then this script again."
+fi
+# macOS blocks the microphone for an app that doesn't say why it wants it. osacompile
+# already adds a generic line ("This script needs…"), so replace it, or add it if missing.
+MIC_WHY="Transcribe Drop records your side of a call to transcribe it on this Mac."
+/usr/libexec/PlistBuddy -c "Set :NSMicrophoneUsageDescription '$MIC_WHY'" "$APP/Contents/Info.plist" 2>/dev/null ||
+  /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string '$MIC_WHY'" "$APP/Contents/Info.plist"
+# osacompile gives the applet no bundle id, so macOS lists it as "droplet" and can't
+# reset its permissions. Give it a real identity and name.
+BUNDLE_ID="com.lverbeeck.transcribe-drop"
+/usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string $BUNDLE_ID" \
+  -c "Add :CFBundleDisplayName string 'Transcribe Drop'" \
+  -c "Set :CFBundleName 'Transcribe Drop'" "$APP/Contents/Info.plist" 2>/dev/null || true
 # osacompile makes an 'on open' applet a droplet, whose icon is droplet.icns —
 # overwrite both so the custom icon shows regardless of CFBundleIconFile.
 if [ -f icon/AppIcon.icns ]; then
@@ -65,6 +84,12 @@ touch "$APP" "$APP/Contents/Info.plist"
 # any signature a downloaded copy reads as "damaged"; ad-hoc gives the normal
 # "unverified developer → Open Anyway" flow instead.
 codesign --force --deep --sign - "$APP" 2>/dev/null || true
+# A rebuild changes the ad-hoc signature, so macOS no longer matches an earlier
+# recording permission to it and keeps asking even though it shows "enabled".
+# Clearing it means the next Record asks once, cleanly.
+# ponytail: signing with a real Apple developer certificate would make permissions survive rebuilds.
+tccutil reset ScreenCapture "$BUNDLE_ID" >/dev/null 2>&1 || true
+tccutil reset Microphone "$BUNDLE_ID" >/dev/null 2>&1 || true
 
 echo ""
 echo "Done. Drag 'Transcribe Drop.app' into your Applications folder (or double-click it right here)."
