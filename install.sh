@@ -59,6 +59,28 @@ chmod +x "$RES/launch.sh"
 if command -v swiftc >/dev/null 2>&1; then
   echo "==> Building the meeting recorder…"
   swiftc -O recorder.swift -o "$RES/recorder"
+  # A tiny helper app that posts the notifications: they show whose app they come from,
+  # so this gives them the Transcribe Drop name and icon. No Dock icon (LSUIElement).
+  echo "==> Building the notifier…"
+  NOTIFIER="$APP/Contents/Helpers/Notifier.app"
+  mkdir -p "$NOTIFIER/Contents/MacOS" "$NOTIFIER/Contents/Resources"
+  swiftc -O notifier.swift -o "$NOTIFIER/Contents/MacOS/notifier"
+  cp icon/AppIcon.icns "$NOTIFIER/Contents/Resources/"
+  cat > "$NOTIFIER/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>com.lverbeeck.transcribe-drop.notifier</string>
+  <key>CFBundleName</key><string>Transcribe Drop</string>
+  <key>CFBundleDisplayName</key><string>Transcribe Drop</string>
+  <key>CFBundleExecutable</key><string>notifier</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>LSUIElement</key><true/>
+</dict>
+</plist>
+PLIST
 else
   echo "    Skipping the meeting recorder: run 'xcode-select --install', then this script again."
 fi
@@ -85,8 +107,11 @@ SIGN_ID="Transcribe Drop Local Signing"   # made once by make-signing-cert.sh
 if security find-identity -v -p codesigning | grep -q "\"$SIGN_ID\""; then
   # Same certificate every build → macOS keeps the recording permissions across rebuilds.
   echo "==> Signing with '$SIGN_ID'…"
+  # The notifier first: an app inside the app is signed before the one around it.
+  [ -d "$APP/Contents/Helpers/Notifier.app" ] && codesign --force --sign "$SIGN_ID" "$APP/Contents/Helpers/Notifier.app"
   codesign --force --deep --sign "$SIGN_ID" "$APP"
 else
+  [ -d "$APP/Contents/Helpers/Notifier.app" ] && codesign --force --sign - "$APP/Contents/Helpers/Notifier.app"
   # Ad-hoc: without any signature a downloaded copy reads as "damaged"; ad-hoc gives the
   # normal "unverified developer → Open Anyway" flow instead.
   codesign --force --deep --sign - "$APP" 2>/dev/null || true

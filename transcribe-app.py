@@ -34,8 +34,9 @@ MODEL_URL = channels.MODEL_URL
 OUTPUT_DIR = channels.DATA_DIR / 'output'
 # pywebview's filter description allows only word chars + spaces (no '/'), so keep it plain.
 FILE_TYPES = ('Media files (*.mp4;*.mov;*.mkv;*.webm;*.m4a;*.mp3;*.wav;*.aac;*.flac)',)
-# Posted by a second copy of the app, so the running one shows its window instead.
+# Posted by a second copy of the app (or a clicked notification), so the running one shows its window.
 SHOW_NOTE = 'com.lverbeeck.transcribe-drop.show'
+NOTIFIER = APP_DIR.parent / 'Helpers' / 'Notifier.app'   # built by install.sh from notifier.swift
 
 window = None
 _lock = None   # held open while the app runs: see _already_running()
@@ -448,6 +449,10 @@ def _opened_at_login():
 
 def _notify(msg):
     # macOS notification: the window may be hidden while a meeting runs from the menu bar.
+    # The bundled notifier shows the app's icon; osascript's would show Script Editor's.
+    if NOTIFIER.exists():
+        subprocess.run(['/usr/bin/open', '-g', '-n', str(NOTIFIER), '--args', msg])
+        return
     subprocess.run(['/usr/bin/osascript', '-e', 'on run argv', '-e',
                     'display notification (item 1 of argv) with title "Transcribe Drop"',
                     '-e', 'end run', msg])
