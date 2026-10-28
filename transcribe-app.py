@@ -15,7 +15,10 @@ import threading
 import urllib.request
 from pathlib import Path
 
+import AppKit  # menu bar icon + Dock behaviour (installed with pywebview on macOS)
+import objc
 import webview
+from PyObjCTools import AppHelper
 
 import channels  # Phase 2: channel intelligence (data layer)
 import meetings  # Meetings: record a call on this Mac → transcript → notes + tasks
@@ -47,6 +50,7 @@ class Api:
         self._preload = preload
         self._proc_lock = threading.Lock()  # serialises the channel-processing worker
         self._meet_lock = threading.Lock()  # one meeting transcription at a time
+        self.menubar = None                 # MenuBar, once the GUI loop is up
 
     # Path of a file dropped onto the .app icon (or None), read once by the UI.
     def get_preload(self):
@@ -291,7 +295,12 @@ class Api:
 
     # --- Meetings: record a call on this Mac → local transcript → notes + tasks ---
     # Starting/stopping and transcribing run on worker threads; results are pushed to
-    # the UI via onMeetState / onMeetings / onMeetProc.
+    # the UI via onMeetState / onMeetings / onMeetProc, and to the menu bar icon.
+
+    def _meet_state(self):
+        self._emit('onMeetState', meetings.state())
+        if self.menubar:
+            AppHelper.callAfter(self.menubar.refresh)
 
     def meeting_state(self):
         return meetings.state()
@@ -313,7 +322,8 @@ class Api:
             self._emit('onMeetProc', '')
         except Exception as e:  # noqa: BLE001 — e.g. recording permission denied → shown in the UI
             self._emit('onMeetProc', f'Error: {e}')
-        self._emit('onMeetState', meetings.state())
+            _notify(str(e))   # the window may be hidden when recording from the menu bar
+        self._meet_state()
         self._emit('onMeetings', meetings.list_meetings())
 
     def stop_meeting(self, lang=''):
@@ -323,7 +333,7 @@ class Api:
     def _stop_meeting(self, lang):
         meetings.save_lang(lang)
         meetings.stop()
-        self._emit('onMeetState', meetings.state())
+        self._meet_state()
         self._process_meetings(lang)
 
     # Called when the Meetings tab opens: picks up meetings that never got transcribed
@@ -339,8 +349,10 @@ class Api:
                 try:
                     done = meetings.process(mid, lang, status=lambda m: self._emit('onMeetProc', m))
                     self._emit('onMeetProc', 'Notes ready.' if done else 'Transcript ready.')
+                    _notify('Meeting notes ready.' if done else 'Meeting transcript ready.')
                 except Exception as e:  # noqa: BLE001 — keep the audio; it retries next time the tab opens
                     self._emit('onMeetProc', f'Error: {e}')
+                    _notify(f'Meeting error: {e}')
             self._emit('onMeetings', meetings.list_meetings())
 
     # On-demand notes: written the first time a transcribed meeting is opened
@@ -368,6 +380,77 @@ def _set_dock_icon():
         pass
 
 
+def _notify(msg):
+    # macOS notification: the window may be hidden while a meeting runs from the menu bar.
+    subprocess.run(['/usr/bin/osascript', '-e', 'on run argv', '-e',
+                    'display notification (item 1 of argv) with title "Transcribe Drop"',
+                    '-e', 'end run', msg])
+
+
+def _show_window():
+    AppHelper.callAfter(AppKit.NSApp.setActivationPolicy_, AppKit.NSApplicationActivationPolicyRegular)
+    AppHelper.callAfter(_set_dock_icon)
+    window.show()
+
+
+def _on_closing():
+    """The red button / Cmd+W only hide the window, so the menu bar icon keeps working
+    (the Dock icon goes too, until it's reopened). Quit from the app menu, the Dock or
+    the menu bar icon really quits; Cmd+Q never comes through here."""
+    ev = AppKit.NSApp.currentEvent()
+    if ev is None or ev.window() != window.native:   # not a click/key in our window → a real quit
+        return True
+    window.hide()
+    AppKit.NSApp.setActivationPolicy_(AppKit.NSApplicationActivationPolicyAccessory)
+    return False
+
+
+class MenuBar(AppKit.NSObject):
+    """Menu bar icon: start or stop a meeting recording without opening the window."""
+
+    @objc.python_method
+    def setup(self, api):
+        self.api = api
+        self.item = AppKit.NSStatusBar.systemStatusBar().statusItemWithLength_(AppKit.NSVariableStatusItemLength)
+        menu = AppKit.NSMenu.alloc().init()
+        self.rec = menu.addItemWithTitle_action_keyEquivalent_('Start recording', 'toggle:', '')
+        menu.addItem_(AppKit.NSMenuItem.separatorItem())
+        menu.addItemWithTitle_action_keyEquivalent_('Open Transcribe Drop', 'open:', '')
+        menu.addItemWithTitle_action_keyEquivalent_('Quit Transcribe Drop', 'quit:', '')
+        for it in menu.itemArray():
+            it.setTarget_(self)
+        self.item.setMenu_(menu)
+        self.refresh()
+        return self
+
+    @objc.python_method
+    def refresh(self):
+        on = meetings.state()['recording']
+        img = AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_(
+            'record.circle.fill' if on else 'waveform', 'Transcribe Drop')
+        if on:
+            # A red dot while recording: a coloured image, not a tint (tinting a menu bar
+            # button breaks its light/dark drawing and leaves it black on a dark menu bar).
+            img = img.imageWithSymbolConfiguration_(
+                AppKit.NSImageSymbolConfiguration.configurationWithPaletteColors_([AppKit.NSColor.systemRedColor()]))
+        img.setTemplate_(not on)   # template = macOS draws it white or black to match the menu bar
+        self.item.button().setImage_(img)
+        self.rec.setTitle_('Stop & transcribe' if on else 'Start recording')
+
+    def toggle_(self, sender):
+        s = meetings.state()
+        if s['recording']:
+            self.api.stop_meeting(s['lang'])   # the language last picked in the Meetings tab
+        else:
+            self.api.start_meeting()
+
+    def open_(self, sender):
+        _show_window()
+
+    def quit_(self, sender):
+        window.destroy()
+
+
 def main():
     global window
     channels.init_db()
@@ -377,8 +460,17 @@ def main():
         'Transcribe Drop', str(APP_DIR / 'ui.html'),
         js_api=api, width=860, height=720, min_size=(640, 600),
     )
+    window.events.closing += _on_closing
     _set_dock_icon()
-    webview.start(_set_dock_icon)  # set again once the GUI loop is up (more reliable)
+
+    def add_menubar():
+        api.menubar = MenuBar.alloc().init().setup(api)
+
+    def ready():
+        _set_dock_icon()                 # set again once the GUI loop is up (more reliable)
+        AppHelper.callAfter(add_menubar)  # AppKit objects must be created on the main thread
+
+    webview.start(ready)
 
 
 if __name__ == '__main__':
