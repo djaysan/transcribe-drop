@@ -35,6 +35,33 @@ mkdir -p "$SUPPORT"
 # anthropic is only used for the optional AI summaries; the app runs without a key.
 "$SUPPORT/venv/bin/pip" install --quiet pywebview anthropic
 
+# Meetings: Homebrew's whisper-cli runs the whole model on the graphics chip, which runs the
+# fan flat out for the length of a call. This build hands the heavy half (the encoder) to the
+# Neural Engine: 2x faster with under half the graphics-chip work (10-min French test,
+# 17 Nov 2026). Same whisper version as Homebrew's. ALLOW_FALLBACK = if the Neural Engine
+# file is missing, it uses the graphics chip instead of failing. meetings.py falls back to
+# Homebrew's whisper-cli when this build is missing, so a failed build never blocks the install.
+# ponytail: built once; delete "$SUPPORT/whisper" and re-run to rebuild (e.g. a newer WHISPER_TAG).
+WHISPER_TAG=v1.9.1
+build_whisper() {
+  # cmake comes from pip into the app's venv, so nothing is installed system-wide.
+  "$SUPPORT/venv/bin/pip" install --quiet cmake &&
+  git clone --quiet --depth 1 --branch "$WHISPER_TAG" https://github.com/ggml-org/whisper.cpp.git "$1" &&
+  "$SUPPORT/venv/bin/cmake" -S "$1" -B "$1/build" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+    -DWHISPER_BUILD_TESTS=OFF -DWHISPER_COREML=1 -DWHISPER_COREML_ALLOW_FALLBACK=1 >/dev/null &&
+  "$SUPPORT/venv/bin/cmake" --build "$1/build" -j 4 --config Release --target whisper-cli >/dev/null &&
+  mkdir -p "$SUPPORT/whisper" &&
+  cp "$1/build/bin/whisper-cli" "$SUPPORT/whisper/"
+}
+if [ ! -x "$SUPPORT/whisper/whisper-cli" ]; then
+  echo "==> Building whisper with Neural Engine support (one time, a few minutes)…"
+  WTMP="$(mktemp -d)"
+  # Compiler chatter goes to a log; the installer only says whether it worked.
+  build_whisper "$WTMP/whisper.cpp" > "$SUPPORT/whisper-build.log" 2>&1 ||
+    echo "    Skipped (see whisper-build.log): meetings will use Homebrew's whisper-cli (graphics chip)."
+  rm -rf "$WTMP"
+fi
+
 echo "==> Building a self-contained 'Transcribe Drop.app'…"
 APP="Transcribe Drop.app"
 # The applet finds its own launcher via 'path to resource', so the app has no
@@ -126,3 +153,5 @@ echo ""
 echo "Done. Drag 'Transcribe Drop.app' into your Applications folder (or double-click it right here)."
 echo "First time you open it: right-click → Open, then confirm (it's an unsigned local app)."
 echo "The transcription model (~148 MB) downloads automatically the first time it's needed."
+echo "The first meeting after this install takes a few extra minutes: macOS prepares the"
+echo "Neural Engine model once (1.2 GB download), then every meeting after is fast."

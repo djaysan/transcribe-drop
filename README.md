@@ -28,6 +28,15 @@ First launch installs the tools it needs and downloads the ~148 MB model automat
 
 > Building from source and using the Meetings tab? Run `./make-signing-cert.sh` once before `./install.sh`. It creates a local signing certificate, so macOS keeps the Microphone and Screen Recording permissions every time you rebuild.
 
+## Meeting video (Brave / Chrome, optional)
+
+The Meetings tab records audio. To also keep the call's video (slides, shared screens), install the browser extension once:
+
+1. Open `brave://extensions` (or `chrome://extensions`), switch on **Developer mode**, click **Load unpacked** and pick the `extension` folder.
+2. Pin the Transcribe Drop icon to the toolbar.
+
+On a call tab, click the icon or press **⌥⇧R**. This starts the meeting recording too, if it isn't already running. The icon shows **REC** while it records that tab's picture, even while you're on another tab. The video stops when the meeting does, and the meeting gets a `video.mp4` with the call audio, on the same timeline as the transcript. That's about 100–350 MB an hour. Browsers only let an extension record a tab after a click or its shortcut, so this one step stays manual.
+
 ## AI summaries (optional)
 
 Open **⚙ Settings**, paste an [Anthropic API key](https://console.anthropic.com), and — optionally — pick a context file describing what you do (there's a built-in prompt to generate one with Claude). Without a key the app still lists and transcribes everything; it just skips the summaries. Everything except the summaries is free and local.

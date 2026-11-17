@@ -155,8 +155,10 @@
   .rec-row .go { flex:none; }
   .btn.stop { background:var(--err); }
   .rec-time { font-size:13px; font-weight:600; color:var(--err); font-variant-numeric:tabular-nums; }
-  .mrow { cursor:pointer; }
-  .mrow:hover { border-color:var(--accent); }
+  .m-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
+  #m-detail .detail-head { flex-wrap:wrap; gap:8px; }
+  .md-title { font-weight:650; font-size:16px; margin-top:16px; }
+  .vcard .vmeta { font-size:11.5px; color:var(--t3); padding:0 12px 10px; margin-top:-4px; }
 </style>
 </head>
 <body>
@@ -319,21 +321,24 @@ Here's the raw material: [describe yourself in a few sentences — role, stack, 
         <label>Language <select id="mlang"></select></label>
         <label class="chk"><input type="checkbox" id="mauto"> Auto-record calls</label>
       </div>
-      <div class="hint" style="text-align:left">Records your mic as <b>Me</b> and the call audio as <b>Them</b>, right on this Mac. No bot joins the call. Wear headphones so the two sides stay separate, and let people know you're recording. With auto-record on, recording starts once an app (Zoom, Teams, a browser call…) has used the mic for 20 seconds, and stops 15 seconds after the call ends.</div>
+      <div class="hint" style="text-align:left">Records your mic as <b>Me</b> and the call audio as <b>Them</b>, right on this Mac. No bot joins the call. Wear headphones so the two sides stay separate, and let people know you're recording. With auto-record on, recording starts once an app (Zoom, Teams, a browser call…) has used the mic for 20 seconds, and stops 15 seconds after the call ends. Call in Brave or Chrome? The Transcribe Drop browser extension adds the call's video: click its icon (or press ⌥⇧R) on the call tab.</div>
     </div>
 
     <div class="status" id="mproc"></div>
 
     <div class="scroll">
-      <div id="m-list" class="saved-list"></div>
+      <div id="m-list" class="vid-grid m-grid"></div>
 
       <div id="m-detail" style="display:none">
         <div class="detail-head">
           <button class="btn ghost" id="mback">← Meetings</button>
-          <span class="name" id="md-title"></span>
+          <button class="btn ghost" id="md-video">Open video</button>
+          <button class="btn ghost" id="md-delvideo">Delete video</button>
           <button class="btn ghost" id="md-copy">Copy notes</button>
           <button class="btn ghost" id="md-reveal">Show in Finder</button>
+          <button class="btn ghost" id="md-delete">Delete meeting</button>
         </div>
+        <div class="md-title" id="md-title"></div>
         <div class="vd-body">
           <div class="vd-summary" id="md-notes"></div>
           <button class="linky" id="md-tr-toggle" style="display:none">Show full transcript</button>
@@ -742,14 +747,22 @@ Here's the raw material: [describe yourself in a few sentences — role, stack, 
     api().process_pending_meetings($('mlang').value);   // transcribe anything left over
   }
 
+  // "31 min", "1 h 05 min"; "" when unknown
+  function meetLength(secs) {
+    const m = Math.round(secs / 60);
+    return !secs ? '' : m < 60 ? `${Math.max(1, m)} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
+  }
+
+  // One tile per meeting: a frame of its video (🎙 when audio only), title, date · length · tokens
   function renderMeetings(list) {
-    const label = { recording: ' · recording…', pending: ' · waiting to transcribe', done: '' };
+    const badge = { recording: 'recording…', pending: 'waiting to transcribe' };
     $('m-list').innerHTML = list.length ? list.map(m => `
-      <div class="srow mrow" data-id="${esc(m.id)}">
-        <div class="sinfo">
-          <div class="stitle">${esc(m.title)}</div>
-          <div class="schan">${esc(m.when)}${label[m.state]}</div>
-        </div>
+      <div class="vcard mtile ${m.state === 'done' ? '' : 'pending'}" data-id="${esc(m.id)}">
+        ${m.thumb ? `<img class="thumb" src="${m.thumb}">` : '<div class="thumb noimg">🎙</div>'}
+        ${badge[m.state] ? `<div class="badge">${badge[m.state]}</div>` : ''}
+        <div class="vtitle">${esc(m.title)}</div>
+        <div class="vmeta">${[m.when, meetLength(m.secs),
+          m.tokens && `${m.tokens < 1000 ? m.tokens : Math.round(m.tokens / 1000) + 'k'} tokens`].filter(Boolean).join(' · ')}</div>
       </div>`).join('')
       : '<div class="empty">No meetings yet. Hit Record when a call starts.</div>';
   }
@@ -771,6 +784,21 @@ Here's the raw material: [describe yourself in a few sentences — role, stack, 
     $('md-tr-toggle').textContent = 'Show full transcript';
     $('md-tr-toggle').style.display = d.transcript ? '' : 'none';
     $('md-reveal').onclick = () => api().reveal(d.path);
+    const showVideo = v => ['md-video', 'md-delvideo'].forEach(id => $(id).style.display = v ? '' : 'none');
+    showVideo(d.video);
+    $('md-video').onclick = () => api().open_video(mid);
+    $('md-delvideo').onclick = async () => {
+      if (!confirm('Delete this meeting\'s video? The transcript and notes stay.')) return;
+      showVideo((await api().delete_video(mid)).video);
+      setMeetProc('Video deleted.');
+    };
+    $('md-delete').onclick = async () => {
+      if (!confirm('Delete this whole meeting? Its audio, transcript, notes and video are removed for good.')) return;
+      const err = await api().delete_meeting(mid);
+      if (err) return setMeetProc(err);
+      showMeetList();
+      setMeetProc('Meeting deleted.');
+    };
     $('md-copy').onclick = () => {
       navigator.clipboard.writeText($('md-notes').textContent + '\n\n' + d.transcript);
       setMeetProc('Notes and transcript copied.');
@@ -795,7 +823,7 @@ Here's the raw material: [describe yourself in a few sentences — role, stack, 
   window.onMeetings = renderMeetings;
   window.onMeetProc = setMeetProc;
   $('m-list').addEventListener('click', e => {
-    const row = e.target.closest('.mrow');
+    const row = e.target.closest('.mtile');
     if (row) openMeeting(row.dataset.id);
   });
   $('mback').addEventListener('click', showMeetList);

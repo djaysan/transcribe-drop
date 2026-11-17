@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Transcribe Drop",
+  "version": "1.0",
+  "description": "Adds the call's video to a Transcribe Drop meeting recording.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuf4PNZV5baBIrBvGG3Ld9FJAim9Wfy8EVYXgHQdR58+bCKLbGLjf2sAc2j98jDuyGmTjA99/7zc+oZcbVAVZdQiIEz92Qg0iAls/JyvsljXGgEwIdsgq/KjcGjJcw2Ubgh4ZFMpROx9GmadXxSKEvfwx1EeueOR0bRefAt5ITw5Kvl9WC/jhwjsYbOyz1ugocAtE9wj13dIoMK95Eawy2WzEARVPPayejAAwirdGkXYZ6bQnVc7jS+U2OmNt1JxBCx0JnA71ilLwYvteuV8Njg0Gt6Qm8IAcpm6XUQww8WMpAt7xGb+1GssMjImmC6de/T3lWuHC9BD/Oqh9m2pa9QIDAQAB",
+  "permissions": [
+    "tabCapture",
+    "offscreen",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:47913/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Transcribe Drop: record this tab's video",
+    "default_icon": "icon.png"
+  },
+  "icons": {
+    "128": "icon.png"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      }
+    }
+  }
+}

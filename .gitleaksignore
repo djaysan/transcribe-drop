@@ -1,0 +1,4 @@
+# Checked false positives for gitleaks (one finding per line).
+# extension/manifest.json "key" is the extension's RSA PUBLIC key: it pins the extension ID
+# so the app can tell its requests apart. Not a secret; the private key was never kept.
+extension/manifest.json:generic-api-key:6

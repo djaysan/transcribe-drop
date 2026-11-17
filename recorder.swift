@@ -4,7 +4,8 @@
 //   me.m4a   — the microphone (your side)
 //   them.m4a — everything the Mac plays (the other side of the call)
 // Both are 16 kHz mono AAC. Prints "recording" once capture is running, then records
-// until SIGINT/SIGTERM or until the app that started it exits.
+// until SIGINT/SIGTERM or until the app that started it exits. If the mic goes quiet (its
+// device changed mid-call), the capture is reopened on the current mic; the gap is silence.
 //
 // `recorder watch` records nothing: once a second it prints which apps are using the mic,
 // as a JSON list (e.g. ["Brave Browser"]), for auto-record. See watch() below.
@@ -82,6 +83,12 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
   let queue = DispatchQueue(label: "recorder")   // all buffers + file writes happen here
   var tracks: [SCStreamOutputType: Track] = [:]
   var stream: SCStream?
+  var filter: SCContentFilter?
+  let cfg = SCStreamConfiguration()
+  var watchdog: DispatchSourceTimer?
+  var lastMic = Date()     // when the mic last delivered audio
+  var reopening = false
+  var closing = false      // stop() was called: never reopen
   var stopping = false
 
   func start(dir: URL) async throws {
@@ -91,7 +98,6 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
     tracks = [.microphone: try Track(url: dir.appendingPathComponent("me.m4a")),
               .audio: try Track(url: dir.appendingPathComponent("them.m4a"))]
 
-    let cfg = SCStreamConfiguration()
     cfg.capturesAudio = true
     cfg.captureMicrophone = true
     cfg.excludesCurrentProcessAudio = true
@@ -101,15 +107,45 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
     cfg.height = 2
     cfg.minimumFrameInterval = CMTime(value: 1, timescale: 1)
 
-    let s = SCStream(filter: SCContentFilter(display: display, excludingWindows: []), configuration: cfg, delegate: self)
+    filter = SCContentFilter(display: display, excludingWindows: [])
+    try await open()
+
+    // The mic delivers audio nonstop, even in silence. When its device changes or goes away
+    // (a headset plugged in, AirPods connecting), ScreenCaptureKit's mic capture goes quiet
+    // for good, with no error: 3 s without mic audio → reopen the capture on the current mic.
+    let t = DispatchSource.makeTimerSource(queue: queue)
+    t.schedule(deadline: .now() + 3, repeating: 1)
+    t.setEventHandler { [self] in
+      guard !closing, !reopening, Date().timeIntervalSince(lastMic) > 3 else { return }
+      reopening = true
+      Task { await reopen() }
+    }
+    t.resume()
+    watchdog = t
+  }
+
+  func open() async throws {
+    let s = SCStream(filter: filter!, configuration: cfg, delegate: self)
     try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)   // frames are ignored
     try s.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
     try s.addStreamOutput(self, type: .microphone, sampleHandlerQueue: queue)
     try await s.startCapture()
-    stream = s
+    queue.sync { stream = s; lastMic = Date() }
+  }
+
+  func reopen() async {
+    FileHandle.standardError.write("\(Date()) mic went quiet: reopening the capture\n".data(using: .utf8)!)
+    let old = queue.sync { stream }
+    try? await old?.stopCapture()
+    // A new stream may count time from a new origin: each track re-anchors on its next buffer.
+    queue.sync { stream = nil; tracks.values.forEach { $0.firstPTS = nil } }
+    try? await open()   // no mic at all → the watchdog tries again in 3 s
+    queue.sync { lastMic = Date(); reopening = false }
   }
 
   func stream(_ stream: SCStream, didOutputSampleBuffer sb: CMSampleBuffer, of type: SCStreamOutputType) {
+    guard stream === self.stream else { return }   // late buffers from a stream being replaced
+    if type == .microphone { lastMic = Date() }
     guard let track = tracks[type], sb.isValid, let desc = sb.formatDescription else { return }
     let format = AVAudioFormat(cmAudioFormatDescription: desc)
     let frames = AVAudioFrameCount(sb.numSamples)
@@ -123,12 +159,13 @@ final class Recorder: NSObject, SCStreamOutput, SCStreamDelegate {
   // Capture died (permission revoked, display gone…): keep what was recorded.
   func stream(_ stream: SCStream, didStopWithError error: Error) {
     FileHandle.standardError.write("capture stopped: \(error.localizedDescription)\n".data(using: .utf8)!)
-    finish(code: 1)
+    if queue.sync(execute: { stream === self.stream }) { finish(code: 1) }   // not one being replaced
   }
 
   func stop() {
+    let s = queue.sync { closing = true; return stream }
     Task {
-      try? await stream?.stopCapture()
+      try? await s?.stopCapture()
       finish(code: 0)
     }
   }

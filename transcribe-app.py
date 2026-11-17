@@ -15,10 +15,13 @@ import tempfile
 import threading
 import time
 import urllib.request
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import AppKit  # menu bar icon + Dock behaviour (installed with pywebview on macOS)
 import objc
+import Quartz  # presses the extension's shortcut (installed with pywebview on macOS)
 import webview
 from PyObjCTools import AppHelper
 
@@ -37,6 +40,11 @@ FILE_TYPES = ('Media files (*.mp4;*.mov;*.mkv;*.webm;*.m4a;*.mp3;*.wav;*.aac;*.f
 # Posted by a second copy of the app (or a clicked notification), so the running one shows its window.
 SHOW_NOTE = 'com.lverbeeck.transcribe-drop.show'
 NOTIFIER = APP_DIR.parent / 'Helpers' / 'Notifier.app'   # built by install.sh from notifier.swift
+# The Brave/Chrome extension (extension/) talks to the app on this port, this Mac only. Its
+# ID is pinned by the "key" in extension/manifest.json; requests from anywhere else are refused.
+EXT_PORT = 47913
+EXT_ORIGIN = 'chrome-extension://ogmebfnedmhacgomjjikjkhpbgofbgga'
+BROWSERS = ('Brave', 'Chrome', 'Edge', 'Arc', 'Vivaldi')   # where the extension can add the video
 
 window = None
 _lock = None   # held open while the app runs: see _already_running()
@@ -57,6 +65,9 @@ class Api:
         self._proc_lock = threading.Lock()  # serialises the channel-processing worker
         self._meet_lock = threading.Lock()  # one meeting transcription at a time
         self.menubar = None                 # MenuBar, once the GUI loop is up
+        self._auto = meetings.AutoRecord()  # fed by _watch_mic; the extension's starts are adopted
+        self.video_at = 0                   # when the extension's tab recording last checked in
+        self._browser = 'Brave Browser'     # the last browser that held the mic: where the video is
 
     # Path of a file dropped onto the .app icon (or None), read once by the UI.
     def get_preload(self):
@@ -338,9 +349,74 @@ class Api:
 
     def _stop_meeting(self, lang):
         meetings.save_lang(lang)
-        meetings.stop()
+        d = meetings.stop()
         self._meet_state()
+        if d:
+            self._make_video(d)   # if the extension's video already ended; else it's made when it does
         self._process_meetings(lang)
+
+    # --- video: recorded by the browser extension, see ExtHandler ---
+    def _make_video(self, d):
+        try:
+            meetings.make_video(d)
+        except Exception as e:  # noqa: BLE001 — the tab recording stays in the folder as screen-*.mp4
+            _notify(f'Could not make the meeting video: {e}')
+        self._emit('onMeetings', meetings.list_meetings())
+
+    def open_video(self, mid):
+        subprocess.run(['/usr/bin/open', str(meetings.videos(mid)[0])])
+        return True
+
+    def delete_video(self, mid):
+        meetings.delete_video(mid)
+        self._emit('onMeetings', meetings.list_meetings())
+        return meetings.detail(mid)
+
+    def delete_meeting(self, mid):
+        """Returns why it can't be deleted (it's recording), or ''."""
+        try:
+            meetings.delete_meeting(mid)
+        except ValueError as e:
+            return str(e)
+        self._emit('onMeetings', meetings.list_meetings())
+        return ''
+
+    def ext_start(self):
+        """The extension's Record click: record the meeting if it isn't already. Returns an error
+        message, or ''. A meeting started this way auto-stops after the call, like an auto-recorded one."""
+        if meetings.state()['recording']:
+            return ''
+        self._start_meeting()
+        if not meetings.state()['recording']:
+            return "the recording couldn't start; the app says why"
+        self._auto.adopt = True
+        return ''
+
+    def video_on(self):
+        """The extension's tab recording checked in lately (it does every 3 s while it runs)."""
+        return time.time() - self.video_at < 10
+
+    def record_video(self, browser=None):
+        """Starts the call video from here: brings the browser to the front and presses the
+        extension's shortcut (⌥⇧R), as browsers only start a tab recording from a click or that
+        shortcut. Pressing keys needs Accessibility (System Settings → Privacy & Security).
+        ponytail: records the browser's front tab, which is the call unless you just switched tabs."""
+        if self.video_on():
+            return   # pressing again would stop it
+        if not Quartz.CGPreflightPostEventAccess():
+            Quartz.CGRequestPostEventAccess()   # macOS asks once; then it's a switch in System Settings
+            _alert('Allow Transcribe Drop under Accessibility (System Settings → Privacy & Security) '
+                   'and the video will start by itself next time.')
+            return
+        subprocess.run(['/usr/bin/open', '-a', browser or self._browser])
+        time.sleep(1)   # until it's the front app: the key press goes there
+        for down in (True, False):
+            e = Quartz.CGEventCreateKeyboardEvent(None, 15, down)   # 15 = the R key
+            Quartz.CGEventSetFlags(e, Quartz.kCGEventFlagMaskAlternate | Quartz.kCGEventFlagMaskShift)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, e)
+        time.sleep(8)   # the recording checks in 3 s after it starts
+        if not self.video_on():
+            _alert('The automatic start didn\'t work this time.')
 
     # Called when the Meetings tab opens: picks up meetings that never got transcribed
     # (e.g. the app was quit right after a call).
@@ -384,7 +460,7 @@ class Api:
                                  stderr=subprocess.DEVNULL, text=True)
         except OSError:
             return   # recorder not built: auto-record never fires, manual recording says why
-        auto = meetings.AutoRecord()
+        auto = self._auto
         for line in p.stdout:   # one reading a second, e.g. ["Brave Browser"]
             try:
                 apps = json.loads(line)
@@ -392,14 +468,72 @@ class Api:
                 p.terminate()
                 return
             s = meetings.state()
+            browser = next((a for a in apps if any(b in a for b in BROWSERS)), None)
+            self._browser = browser or self._browser
             act = auto.tick(time.time(), apps, s['recording'], s['auto'])
             if act == 'start':
                 self._start_meeting()   # on this thread, so the next reading sees it recording
                 if meetings.state()['recording']:
-                    _notify(f"Recording, mic in use by {', '.join(apps)}")
+                    _notify(f"Recording, mic in use by {', '.join(apps)}.")
+                    if browser:   # a call in the browser: add its video
+                        threading.Thread(target=self.record_video, args=(browser,), daemon=True).start()
             elif act == 'stop':
                 _notify('Call ended, transcribing…')
                 self.stop_meeting(s['lang'])   # the language last picked in the Meetings tab
+
+
+class ExtHandler(BaseHTTPRequestHandler):
+    """The browser extension's requests (extension/background.js, offscreen.js), all POST:
+    /state, /start, /video (a chunk of the tab recording), /video/done."""
+    api = None   # set in main()
+
+    def do_POST(self):
+        # Only our extension. A web page can't fake its Origin header, so no site can
+        # start a recording or send video here.
+        if self.headers.get('Origin') != EXT_ORIGIN:
+            return self._send(403, 'forbidden')
+        url = urlparse(self.path)
+        q = parse_qs(url.query)
+        start = int(q.get('start', ['0'])[0])
+        size = int(self.headers.get('Content-Length') or 0)
+        if size > 50_000_000:   # a 5-second chunk is well under 1 MB
+            return self._send(413, 'too large')
+        body = self.rfile.read(size)
+        if start:   # only a running tab recording names itself: its chunks and 3-second checks
+            self.api.video_at = 0 if url.path == '/video/done' else time.time()
+        try:
+            if url.path == '/state':
+                return self._send(200, json.dumps({'recording': meetings.state()['recording']}))
+            if url.path == '/start':
+                err = self.api.ext_start()
+                return self._send(500 if err else 200, err)
+            if url.path == '/video':
+                meetings.add_screen(start, body)
+            elif url.path == '/video/done':
+                d = meetings.screen_done(start, int(q.get('first', [start])[0]))
+                if d:   # the meeting is already over → make the video now
+                    threading.Thread(target=self.api._make_video, args=(d,), daemon=True).start()
+            else:
+                return self._send(404, 'not found')
+        except ValueError as e:   # e.g. a chunk when no meeting is recording
+            return self._send(409, str(e))
+        self._send(200, '')
+
+    def _send(self, code, text):
+        self.send_response(code)
+        self.end_headers()
+        self.wfile.write(text.encode())
+
+    def log_message(self, *args):   # no per-request lines on stderr
+        pass
+
+
+def _serve_extension(api):
+    ExtHandler.api = api
+    try:
+        ThreadingHTTPServer(('127.0.0.1', EXT_PORT), ExtHandler).serve_forever()
+    except OSError:   # port taken by another program: everything but the extension still works
+        pass
 
 
 def _set_dock_icon():
@@ -447,6 +581,15 @@ def _opened_at_login():
     return False
 
 
+def _alert(why):
+    # A notification slides away unseen mid-call (the 3 Nov call lost its video that way):
+    # this one sits in the middle of the screen until clicked. Popen: doesn't hold the caller.
+    subprocess.Popen(['/usr/bin/osascript', '-e', 'on run argv', '-e',
+                      'display alert "Call video is NOT recording" message (item 1 of argv) as critical',
+                      '-e', 'end run',
+                      'Click the Transcribe Drop icon in the browser, on the call tab (or press ⌥⇧R).\n\n' + why])
+
+
 def _notify(msg):
     # macOS notification: the window may be hidden while a meeting runs from the menu bar.
     # The bundled notifier shows the app's icon; osascript's would show Script Editor's.
@@ -484,7 +627,10 @@ class MenuBar(AppKit.NSObject):
         self.api = api
         self.item = AppKit.NSStatusBar.systemStatusBar().statusItemWithLength_(AppKit.NSVariableStatusItemLength)
         menu = AppKit.NSMenu.alloc().init()
+        menu.setAutoenablesItems_(False)   # refresh() greys out the video item
+        menu.setDelegate_(self)            # menuNeedsUpdate_ on every open
         self.rec = menu.addItemWithTitle_action_keyEquivalent_('Start recording', 'toggle:', '')
+        self.vid = menu.addItemWithTitle_action_keyEquivalent_('Record call video', 'video:', '')
         self.auto = menu.addItemWithTitle_action_keyEquivalent_('Auto-record calls', 'auto:', '')
         menu.addItem_(AppKit.NSMenuItem.separatorItem())
         menu.addItemWithTitle_action_keyEquivalent_('Open Transcribe Drop', 'open:', '')
@@ -512,7 +658,17 @@ class MenuBar(AppKit.NSObject):
         img.setTemplate_(not on)   # template = macOS draws it white or black to match the menu bar
         self.item.button().setImage_(img)
         self.rec.setTitle_('Stop & transcribe' if on else 'Start recording')
+        vid = self.api.video_on()
+        self.vid.setHidden_(not on)   # only while a meeting records
+        self.vid.setTitle_('Call video: recording' if vid else 'Record call video')
+        self.vid.setEnabled_(not vid)
         self.auto.setState_(AppKit.NSControlStateValueOn if s['auto'] else AppKit.NSControlStateValueOff)
+
+    def menuNeedsUpdate_(self, menu):   # the video state comes from the extension: read it on open
+        self.refresh()
+
+    def video_(self, sender):
+        threading.Thread(target=self.api.record_video, daemon=True).start()   # it waits ~10 s
 
     def toggle_(self, sender):
         s = meetings.state()
@@ -557,6 +713,7 @@ def main():
         if hidden:   # menu bar icon only, like after closing the window
             AppHelper.callAfter(AppKit.NSApp.setActivationPolicy_, AppKit.NSApplicationActivationPolicyAccessory)
         threading.Thread(target=api._watch_mic, daemon=True).start()
+        threading.Thread(target=_serve_extension, args=(api,), daemon=True).start()
 
     webview.start(ready)
 
