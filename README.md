@@ -15,18 +15,27 @@ Transcription runs entirely on your machine (whisper.cpp) — no accounts, no pe
 - **AI summaries** — click a video and Claude Haiku summarises it, tuned to a short "what I'm working on" context file, flagging what's **relevant to you** (the ✨). Summaries are generated on demand, so you only pay for what you actually open (~1¢ each, then cached).
 - **Collections** — group pasted video/reel URLs (including Facebook reels) under any name you like.
 - **Watch-later checklist** — star videos (☆) and check them off as you get through them.
+- **Meetings**: record a call on this Mac (your mic and the call's sound), transcribe it on the Neural Engine with Me/Them labels, and get notes with decisions and tasks (needs an API key). Start and stop from the menu bar icon, or let it record by itself whenever a call holds the mic.
 
 ## Install (macOS)
 
-1. Download **`Transcribe-Drop-macOS.zip`** from the [latest release](https://github.com/djaysan/transcribe-drop/releases/latest) and unzip it.
-2. In the **Transcribe Drop** folder, **right-click `Open Transcribe Drop.command` → Open** (just this once — macOS blocks *double*-clicking downloaded scripts, but right-click → Open works). It approves the app and launches it.
-3. Drag **Transcribe Drop.app** to your Applications folder — done.
+You need macOS 15 or later (an Apple Silicon Mac for the Neural Engine), [Homebrew](https://brew.sh) and Xcode's command-line tools (`xcode-select --install`). In Terminal:
 
-First launch installs the tools it needs and downloads the ~148 MB model automatically. Requires [Homebrew](https://brew.sh) (used to fetch `yt-dlp`, `ffmpeg`, `whisper-cpp`).
+```sh
+git clone https://github.com/djaysan/transcribe-drop.git
+cd transcribe-drop
+./make-signing-cert.sh
+./install.sh
+```
 
-> It's an unsigned app (no paid Apple Developer account), so that one-time right-click → Open is macOS's approval step. Prefer to build from source? Grab **`Transcribe-Drop-vX.Y.Z.zip`** and run `./install.sh`.
+Then drag **Transcribe Drop.app** to your Applications folder.
 
-> Building from source and using the Meetings tab? Run `./make-signing-cert.sh` once before `./install.sh`. It creates a local signing certificate, so macOS keeps the Microphone and Screen Recording permissions every time you rebuild.
+- `make-signing-cert.sh` asks for your Mac password once. It creates a local signing certificate, so macOS keeps the Microphone and Screen Recording permissions every time you rebuild.
+- `install.sh` installs `yt-dlp`, `ffmpeg` and `whisper-cpp`, builds whisper with Neural Engine support (meetings transcribe about twice as fast, without the fan) and builds the app. It takes a few minutes.
+- On first launch the app downloads its meeting models in the background (about 1.8 GB, one time). The first meeting transcript takes about 5 minutes longer while macOS prepares the Neural Engine model; after that it's fast.
+- When macOS asks, allow **Microphone**, **Screen Recording** (the call's sound) and **Accessibility** (starts the call video by itself).
+
+To update: `git pull && ./install.sh`, then replace the app in Applications.
 
 ## Meeting video (Brave / Chrome, optional)
 
@@ -49,7 +58,7 @@ Open **⚙ Settings**, paste an [Anthropic API key](https://console.anthropic.co
 
 ## Run from source
 
-Prefer not to build the app? `./install.sh` does everything, or run it directly:
+Prefer not to build the app? Run it directly (Meetings won't record: they need the recorder that `install.sh` builds):
 
 ```sh
 brew install yt-dlp ffmpeg whisper-cpp

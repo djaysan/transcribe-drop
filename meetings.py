@@ -262,6 +262,19 @@ def _ensure_encoder(status):
         zipped.unlink(missing_ok=True)
 
 
+_models_lock = threading.Lock()
+
+
+def prepare(status=lambda m: None):
+    """Download the meeting models if missing (one time, ~1.8 GB). The app runs this in the
+    background at launch, so the first meeting doesn't wait on it; process() runs it too, in
+    case that one failed (offline). The lock makes a second caller wait, not download twice."""
+    with _models_lock:
+        _download(MODEL, MODEL_URL, status)
+        _download(VAD, VAD_URL, status)
+        _ensure_encoder(status)
+
+
 def _whisper(tracks, lang):
     """Transcribe the tracks mixed into one. Returns [(start_seconds, end_seconds, word)]."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -357,9 +370,7 @@ def process(mid, lang='', status=lambda m: None):
     d = _folder(mid)
     if (d / 'transcript.md').exists():
         return None
-    _download(MODEL, MODEL_URL, status)
-    _download(VAD, VAD_URL, status)
-    _ensure_encoder(status)
+    prepare(status)
     # ponytail: "Them" is everyone on the other side; telling them apart needs a
     # diarization model (e.g. pyannote) if that ever matters.
     # One pass on both tracks mixed: transcribing each track alone put the other side's

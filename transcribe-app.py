@@ -418,6 +418,20 @@ class Api:
         if not self.video_on():
             _alert('The automatic start didn\'t work this time.')
 
+    def _prepare_models(self):
+        """At launch: fetch the meeting models now rather than after the first call."""
+        shown = []
+
+        def status(m):
+            shown.append(m)
+            self._emit('onMeetProc', m)
+        try:
+            meetings.prepare(status)
+        except OSError:
+            pass   # offline: the first meeting downloads them instead
+        if shown:
+            self._emit('onMeetProc', '')
+
     # Called when the Meetings tab opens: picks up meetings that never got transcribed
     # (e.g. the app was quit right after a call).
     def process_pending_meetings(self, lang=''):
@@ -714,6 +728,7 @@ def main():
             AppHelper.callAfter(AppKit.NSApp.setActivationPolicy_, AppKit.NSApplicationActivationPolicyAccessory)
         threading.Thread(target=api._watch_mic, daemon=True).start()
         threading.Thread(target=_serve_extension, args=(api,), daemon=True).start()
+        threading.Thread(target=api._prepare_models, daemon=True).start()
 
     webview.start(ready)
 
